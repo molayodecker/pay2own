@@ -9,18 +9,11 @@ import (
 )
 
 func newRouter(
-	read func(context.Context, string) (Installment, error),
-	pay func(context.Context, string) (Installment, error),
 	next func(context.Context, string) (NextInstallment, error),
 	payNext func(context.Context, string) (NextInstallment, error),
 ) *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", healthHandler)
-	mux.HandleFunc(
-		"GET /api/demo/installment",
-		installmentHandler(read),
-	)
-	mux.HandleFunc("POST /api/demo/installment/pay", payInstallmentHandler(pay))
 	mux.HandleFunc("GET /api/devices/{imei}/next-installment", nextInstallmentHandler(next))
 	mux.HandleFunc("POST /api/devices/{imei}/next-installment/pay", nextInstallmentHandler(payNext))
 	return mux
@@ -40,12 +33,6 @@ func main() {
 
 	log.Println("PostgreSQL connection verified")
 	router := newRouter(
-		func(ctx context.Context, id string) (Installment, error) {
-			return findDemoInstallment(ctx, db, id)
-		},
-		func(ctx context.Context, id string) (Installment, error) {
-			return markDemoInstallmentPaid(ctx, db, id)
-		},
 		func(ctx context.Context, imei string) (NextInstallment, error) {
 			return findNextInstallment(ctx, db, imei)
 		},
