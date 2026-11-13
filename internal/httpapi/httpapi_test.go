@@ -13,6 +13,12 @@ import (
 	"pay2own.com/backend/internal/store"
 )
 
+const (
+	goodToken = "good-token"
+	phoneIMEI = "000000000000001"
+	otherIMEI = "000000000000002"
+)
+
 type fakeInstallments struct {
 	next store.NextInstallment
 	err  error
@@ -31,26 +37,39 @@ func (f fakeInstallments) PayNextInstallment(_ context.Context, imei string) (st
 	return n, f.err
 }
 
+func (f fakeInstallments) DeviceIMEIByToken(_ context.Context, token string) (string, error) {
+	if token == goodToken {
+		return phoneIMEI, nil
+	}
+	return "", store.ErrNotFound
+}
+
 var quietLog = slog.New(slog.NewTextHandler(io.Discard, nil))
 
 var sample = store.NextInstallment{Sequence: 1, DueDate: "2026-11-20", Currency: "GHS", AmountMinor: 30000, Status: "unpaid"}
 
-func do(t *testing.T, h http.Handler, method, path string) *httptest.ResponseRecorder {
+func do(t *testing.T, h http.Handler, method, path, token string) *httptest.ResponseRecorder {
 	t.Helper()
+	req := httptest.NewRequest(method, path, nil)
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
 	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequest(method, path, nil))
+	h.ServeHTTP(rec, req)
 	return rec
 }
 
+func nextPath(imei string) string { return "/api/devices/" + imei + "/next-installment" }
+
 func TestHealth(t *testing.T) {
-	rec := do(t, NewRouter(fakeInstallments{}, quietLog), http.MethodGet, "/health")
+	rec := do(t, NewRouter(fakeInstallments{}, quietLog), http.MethodGet, "/health", "")
 	if rec.Code != http.StatusOK || rec.Body.String() != "Pay2Own backend is running\n" {
 		t.Fatalf("got %d %q", rec.Code, rec.Body.String())
 	}
 }
 
 func TestNextInstallmentOK(t *testing.T) {
-	rec := do(t, NewRouter(fakeInstallments{next: sample}, quietLog), http.MethodGet, "/api/devices/000000000000001/next-installment")
+	rec := do(t, NewRouter(fakeInstallments{next: sample}, quietLog), http.MethodGet, nextPath(phoneIMEI), goodToken)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d", rec.Code)
 	}
@@ -58,27 +77,55 @@ func TestNextInstallmentOK(t *testing.T) {
 	if err := json.NewDecoder(rec.Body).Decode(&got); err != nil {
 		t.Fatal(err)
 	}
-	if got.Sequence != 1 || got.Status != "unpaid" || got.IMEI != "000000000000001" {
+	if got.Sequence != 1 || got.Status != "unpaid" || got.IMEI != phoneIMEI {
 		t.Fatalf("got %+v", got)
 	}
 }
 
+func TestMissingTokenIs401(t *testing.T) {
+	rec := do(t, NewRouter(fakeInstallments{next: sample}, quietLog), http.MethodGet, nextPath(phoneIMEI), "")
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401", rec.Code)
+	}
+}
+
+func TestWrongTokenIs401(t *testing.T) {
+	rec := do(t, NewRouter(fakeInstallments{next: sample}, quietLog), http.MethodGet, nextPath(phoneIMEI), "stolen-guess")
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401", rec.Code)
+	}
+}
+
+func TestOtherPhonesIMEIIs403(t *testing.T) {
+	rec := do(t, NewRouter(fakeInstallments{next: sample}, quietLog), http.MethodGet, nextPath(otherIMEI), goodToken)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403", rec.Code)
+	}
+}
+
+func TestPayNeedsToken(t *testing.T) {
+	rec := do(t, NewRouter(fakeInstallments{next: sample}, quietLog), http.MethodPost, nextPath(phoneIMEI)+"/pay", "")
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401", rec.Code)
+	}
+}
+
 func TestBadIMEI(t *testing.T) {
-	rec := do(t, NewRouter(fakeInstallments{}, quietLog), http.MethodGet, "/api/devices/123/next-installment")
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("status = %d, want 400", rec.Code)
+	rec := do(t, NewRouter(fakeInstallments{}, quietLog), http.MethodGet, nextPath("123"), goodToken)
+	if rec.Code != http.StatusForbidden && rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 403 or 400", rec.Code)
 	}
 }
 
 func TestNotFound(t *testing.T) {
-	rec := do(t, NewRouter(fakeInstallments{err: store.ErrNotFound}, quietLog), http.MethodGet, "/api/devices/000000000000001/next-installment")
+	rec := do(t, NewRouter(fakeInstallments{err: store.ErrNotFound}, quietLog), http.MethodGet, nextPath(phoneIMEI), goodToken)
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("status = %d, want 404", rec.Code)
 	}
 }
 
 func TestDatabaseErrorIsHidden(t *testing.T) {
-	rec := do(t, NewRouter(fakeInstallments{err: errors.New("connection refused")}, quietLog), http.MethodGet, "/api/devices/000000000000001/next-installment")
+	rec := do(t, NewRouter(fakeInstallments{err: errors.New("connection refused")}, quietLog), http.MethodGet, nextPath(phoneIMEI), goodToken)
 	if rec.Code != http.StatusInternalServerError {
 		t.Fatalf("status = %d, want 500", rec.Code)
 	}
@@ -88,7 +135,7 @@ func TestDatabaseErrorIsHidden(t *testing.T) {
 }
 
 func TestPayRoute(t *testing.T) {
-	rec := do(t, NewRouter(fakeInstallments{next: sample}, quietLog), http.MethodPost, "/api/devices/000000000000001/next-installment/pay")
+	rec := do(t, NewRouter(fakeInstallments{next: sample}, quietLog), http.MethodPost, nextPath(phoneIMEI)+"/pay", goodToken)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d", rec.Code)
 	}
@@ -100,7 +147,7 @@ func TestPayRoute(t *testing.T) {
 }
 
 func TestPayRouteRejectsGet(t *testing.T) {
-	rec := do(t, NewRouter(fakeInstallments{}, quietLog), http.MethodGet, "/api/devices/000000000000001/next-installment/pay")
+	rec := do(t, NewRouter(fakeInstallments{}, quietLog), http.MethodGet, nextPath(phoneIMEI)+"/pay", goodToken)
 	if rec.Code != http.StatusMethodNotAllowed {
 		t.Fatalf("status = %d, want 405", rec.Code)
 	}

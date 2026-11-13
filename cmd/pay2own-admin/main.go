@@ -27,7 +27,7 @@ func issueToken(imei string) error {
 	if dsn == "" {
 		return fmt.Errorf("DATABASE_URL is required")
 	}
-	
+
 	ctx := context.Background()
 	db, err := store.Open(ctx, dsn)
 	if err != nil {

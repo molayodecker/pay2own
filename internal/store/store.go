@@ -113,3 +113,14 @@ func (s *Store) IssueDeviceToken(ctx context.Context, imei string) (string, erro
 	}
 	return token, nil
 }
+
+// DeviceIMEIByToken returns the IMEI of the device that owns this token.
+func (s *Store) DeviceIMEIByToken(ctx context.Context, token string) (string, error) {
+	var imei string
+	err := s.db.QueryRowContext(ctx,
+		`SELECT imei FROM devices WHERE token_hash = $1`, HashToken(token)).Scan(&imei)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", ErrNotFound
+	}
+	return imei, err
+}

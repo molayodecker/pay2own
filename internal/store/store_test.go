@@ -81,3 +81,30 @@ func TestPayNextInstallmentIntegration(t *testing.T) {
 		t.Fatalf("next = %+v, want #2 due 2026-11-27", next)
 	}
 }
+
+func TestDeviceTokenLifecycle(t *testing.T) {
+	st := openTestStore(t)
+	ctx := context.Background()
+
+	first, err := st.IssueDeviceToken(ctx, testIMEI)
+	if err != nil {
+		t.Fatalf("issue: %v", err)
+	}
+	if imei, err := st.DeviceIMEIByToken(ctx, first); err != nil || imei != testIMEI {
+		t.Fatalf("lookup = %q, %v; want %s", imei, err, testIMEI)
+	}
+
+	second, err := st.IssueDeviceToken(ctx, testIMEI)
+	if err != nil {
+		t.Fatalf("reissue: %v", err)
+	}
+	if _, err := st.DeviceIMEIByToken(ctx, first); err != ErrNotFound {
+		t.Fatalf("old token still works: err = %v", err)
+	}
+	if imei, err := st.DeviceIMEIByToken(ctx, second); err != nil || imei != testIMEI {
+		t.Fatalf("new token lookup = %q, %v", imei, err)
+	}
+	if _, err := st.IssueDeviceToken(ctx, "999999999999999"); err != ErrNotFound {
+		t.Fatalf("unknown device: err = %v, want ErrNotFound", err)
+	}
+}
