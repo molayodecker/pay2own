@@ -1,0 +1,26 @@
+mode: set
+pay2own.com/backend/database.go:11.48,13.16 2 1
+pay2own.com/backend/database.go:13.16,15.3 1 0
+pay2own.com/backend/database.go:17.2,20.44 3 1
+pay2own.com/backend/database.go:20.44,23.3 2 0
+pay2own.com/backend/database.go:25.2,25.16 1 1
+pay2own.com/backend/handlers.go:16.20,17.54 1 1
+pay2own.com/backend/handlers.go:17.54,22.17 4 1
+pay2own.com/backend/handlers.go:22.17,23.37 1 1
+pay2own.com/backend/handlers.go:23.37,26.5 2 0
+pay2own.com/backend/handlers.go:28.4,30.10 3 1
+pay2own.com/backend/handlers.go:33.3,34.64 2 1
+pay2own.com/backend/handlers.go:34.64,36.4 1 0
+pay2own.com/backend/handlers.go:40.60,43.2 2 1
+pay2own.com/backend/installment.go:11.36,19.2 1 1
+pay2own.com/backend/installment_store.go:12.24,27.16 3 1
+pay2own.com/backend/installment_store.go:27.16,29.3 1 0
+pay2own.com/backend/installment_store.go:31.2,31.25 1 1
+pay2own.com/backend/main.go:13.18,21.2 4 1
+pay2own.com/backend/main.go:23.13,25.15 2 0
+pay2own.com/backend/main.go:25.15,27.3 1 0
+pay2own.com/backend/main.go:29.2,30.16 2 0
+pay2own.com/backend/main.go:30.16,32.3 1 0
+pay2own.com/backend/main.go:33.2,37.61 3 0
+pay2own.com/backend/main.go:37.61,39.4 1 0
+pay2own.com/backend/main.go:42.2,49.36 3 0
