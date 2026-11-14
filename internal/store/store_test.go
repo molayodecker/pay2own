@@ -65,28 +65,6 @@ func TestNextInstallmentUnknownIMEI(t *testing.T) {
 	}
 }
 
-func TestPayNextInstallmentIntegration(t *testing.T) {
-	st := openTestStore(t)
-	resetInstallments(t, st)
-	ctx := context.Background()
-
-	paid, err := st.PayNextInstallment(ctx, testIMEI)
-	if err != nil {
-		t.Fatalf("pay: %v", err)
-	}
-	if paid.Sequence != 1 || paid.Status != "paid" {
-		t.Fatalf("paid = %+v, want #1 paid", paid)
-	}
-
-	next, err := st.NextInstallment(ctx, testIMEI)
-	if err != nil {
-		t.Fatalf("next: %v", err)
-	}
-	if next.Sequence != 2 || next.DueDate != "2026-11-27" {
-		t.Fatalf("next = %+v, want #2 due 2026-11-27", next)
-	}
-}
-
 func TestDeviceTokenLifecycle(t *testing.T) {
 	st := openTestStore(t)
 	ctx := context.Background()

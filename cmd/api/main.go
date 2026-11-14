@@ -43,19 +43,13 @@ func run(log *slog.Logger) error {
 	}
 	defer db.Close()
 
-	testPay := os.Getenv("ENABLE_TEST_PAY") == "true"
-	if testPay {
-		log.Warn("test pay route enabled; never use in production")
-	}
-
 	key := os.Getenv("PAYSTACK_SECRET_KEY")
 	if key == "" {
 		return errors.New("PAYSTACK_SECRET_KEY is required")
 	}
 
 	handler := httpapi.NewRouter(store.New(db), log, httpapi.Options{
-		EnableTestPay: testPay,
-		Charger:       paystack.New(key),
+		Charger: paystack.New(key),
 	})
 
 	srv := &http.Server{

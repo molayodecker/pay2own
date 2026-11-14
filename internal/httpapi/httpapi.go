@@ -18,7 +18,6 @@ import (
 
 type Installments interface {
 	NextInstallment(ctx context.Context, imei string) (store.NextInstallment, error)
-	PayNextInstallment(ctx context.Context, imei string) (store.NextInstallment, error)
 	DeviceIMEIByToken(ctx context.Context, token string) (string, error)
 	StartPayment(ctx context.Context, imei string) (store.PendingPayment, error)
 	FailPayment(ctx context.Context, reference string) error
@@ -33,8 +32,7 @@ type Charger interface {
 }
 
 type Options struct {
-	EnableTestPay bool    // dev only: lets a device mark its own installment paid
-	Charger       Charger // nil means payments are switched off
+	Charger Charger // nil means payments are switched off
 }
 
 var imeiPattern = regexp.MustCompile(`^[0-9]{15}$`)
@@ -44,10 +42,6 @@ func NewRouter(inst Installments, log *slog.Logger, opts Options) http.Handler {
 	mux.HandleFunc("GET /health", health)
 	mux.HandleFunc("GET /api/devices/{imei}/next-installment",
 		requireDevice(inst, log, installmentHandler(inst.NextInstallment, log)))
-	if opts.EnableTestPay {
-		mux.HandleFunc("POST /api/devices/{imei}/next-installment/pay",
-			requireDevice(inst, log, installmentHandler(inst.PayNextInstallment, log)))
-	}
 	if opts.Charger != nil {
 		mux.HandleFunc("POST /api/devices/{imei}/payments",
 			requireDevice(inst, log, startPaymentHandler(inst, opts.Charger, log)))

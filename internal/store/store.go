@@ -75,31 +75,6 @@ LIMIT 1`
 	return n, err
 }
 
-func (s *Store) PayNextInstallment(ctx context.Context, imei string) (NextInstallment, error) {
-	const q = `
-WITH next AS (
-	SELECT i.id, d.imei, l.currency
-	FROM devices d
-	JOIN loans l ON l.device_id = d.id
-	JOIN installments i ON i.loan_id = l.id
-	WHERE d.imei = $1 AND l.status = 'active' AND i.status = 'unpaid'
-	ORDER BY i.sequence
-	LIMIT 1
-	FOR UPDATE OF i
-)
-UPDATE installments i
-SET status = 'paid', paid_at = now()
-FROM next
-WHERE i.id = next.id
-RETURNING next.imei, i.sequence, to_char(i.due_date, 'YYYY-MM-DD'), next.currency, i.amount_minor, i.status`
-	var n NextInstallment
-	err := s.db.QueryRowContext(ctx, q, imei).Scan(&n.IMEI, &n.Sequence, &n.DueDate, &n.Currency, &n.AmountMinor, &n.Status)
-	if errors.Is(err, sql.ErrNoRows) {
-		return n, ErrNotFound
-	}
-	return n, err
-}
-
 // HashToken returns the SHA-256 fingerprint stored instead of the token.
 func HashToken(token string) []byte {
 	sum := sha256.Sum256([]byte(token))
