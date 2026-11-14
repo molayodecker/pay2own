@@ -15,6 +15,7 @@ import (
 // ErrNotFound means the row we asked for doesn't exist.
 var ErrNotFound = errors.New("not found")
 var ErrAlreadyPending = errors.New("payment already pending")
+var ErrAmountMismatch = errors.New("payment amount mismatch")
 
 type NextInstallment struct {
 	IMEI        string `json:"imei"`
@@ -160,8 +161,8 @@ func (s *Store) StartPayment(ctx context.Context, imei string) (PendingPayment, 
 	ORDER BY i.sequence
 	LIMIT 1
 	FOR UPDATE OF i`, imei).Scan(&p.InstallmentID, &p.Currency, &p.AmountMinor,
-	&p.CustomerID, &p.Phone, &p.Provider)
-	
+		&p.CustomerID, &p.Phone, &p.Provider)
+
 	if errors.Is(err, sql.ErrNoRows) {
 		return PendingPayment{}, ErrNotFound
 	}
@@ -186,4 +187,50 @@ func (s *Store) StartPayment(ctx context.Context, imei string) (PendingPayment, 
 		return PendingPayment{}, err
 	}
 	return p, tx.Commit()
+}
+
+// FailPayment marks a pending payment failed so the customer can try again right away.
+func (s *Store) FailPayment(ctx context.Context, reference string) error {
+	_, err := s.db.ExecContext(ctx, `
+		UPDATE payments SET status = 'failed', completed_at = now()
+		WHERE reference = $1 AND status = 'pending'`, reference)
+	return err
+}
+
+// CompletePayment records a verified successful payment and marks its installment paid.
+// Calling it again for the same reference does nothing.
+func (s *Store) CompletePayment(ctx context.Context, reference string, amountMinor int64, currency string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var installmentID, wantAmount int64
+	var wantCurrency, status string
+	err = tx.QueryRowContext(ctx, `
+		SELECT installment_id, amount_minor, currency, status
+		FROM payments WHERE reference = $1 FOR UPDATE`, reference).
+		Scan(&installmentID, &wantAmount, &wantCurrency, &status)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrNotFound
+	}
+	if err != nil {
+		return err
+	}
+	if status == "success" {
+		return nil // already recorded
+	}
+	if amountMinor != wantAmount || currency != wantCurrency {
+		return ErrAmountMismatch
+	}
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE payments SET status = 'success', completed_at = now() WHERE reference = $1`, reference); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE installments SET status = 'paid', paid_at = now()
+		WHERE id = $1 AND status = 'unpaid'`, installmentID); err != nil {
+		return err
+	}
+	return tx.Commit()
 }

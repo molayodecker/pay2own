@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"pay2own.com/backend/internal/httpapi"
+	"pay2own.com/backend/internal/paystack"
 	"pay2own.com/backend/internal/store"
 )
 
@@ -47,9 +48,19 @@ func run(log *slog.Logger) error {
 		log.Warn("test pay route enabled; never use in production")
 	}
 
+	key := os.Getenv("PAYSTACK_SECRET_KEY")
+	if key == "" {
+		return errors.New("PAYSTACK_SECRET_KEY is required")
+	}
+
+	handler := httpapi.NewRouter(store.New(db), log, httpapi.Options{
+		EnableTestPay: testPay,
+		Charger:       paystack.New(key),
+	})
+
 	srv := &http.Server{
 		Addr:              addr,
-		Handler:           httpapi.NewRouter(store.New(db), log, httpapi.Options{EnableTestPay: testPay}),
+		Handler:           handler,
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       10 * time.Second,
 		WriteTimeout:      10 * time.Second,

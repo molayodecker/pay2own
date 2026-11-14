@@ -2,6 +2,9 @@ package paystack
 
 import (
 	"context"
+	"crypto/hmac"
+	"crypto/sha512"
+	"encoding/hex"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -71,5 +74,20 @@ func TestServerErrorIsAnError(t *testing.T) {
 	})
 	if _, err := c.Verify(context.Background(), "p2o_test"); err == nil {
 		t.Fatal("expected error")
+	}
+}
+
+func TestValidSignature(t *testing.T) {
+	c := New("sk_test_fake")
+	body := []byte(`{"event":"charge.success"}`)
+	mac := hmac.New(sha512.New, []byte("sk_test_fake"))
+	mac.Write(body)
+	good := hex.EncodeToString(mac.Sum(nil))
+
+	if !c.ValidSignature(body, good) {
+		t.Fatal("good signature rejected")
+	}
+	if c.ValidSignature(body, "bad") || c.ValidSignature([]byte(`{"event":"tampered"}`), good) {
+		t.Fatal("bad signature accepted")
 	}
 }

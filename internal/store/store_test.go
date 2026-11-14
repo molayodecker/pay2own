@@ -2,10 +2,10 @@ package store
 
 import (
 	"context"
+	"errors"
 	"os"
 	"strings"
 	"testing"
-	"errors"
 )
 
 const testIMEI = "000000000000001"
@@ -135,5 +135,33 @@ func TestStartPayment(t *testing.T) {
 
 	if _, err := st.StartPayment(ctx, "999999999999999"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("unknown device: got %v, want ErrNotFound", err)
+	}
+}
+
+func TestCompletePayment(t *testing.T) {
+	st := openTestStore(t)
+	resetInstallments(t, st)
+	ctx := context.Background()
+
+	p, err := st.StartPayment(ctx, testIMEI)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.CompletePayment(ctx, p.Reference, 29999, "GHS"); !errors.Is(err, ErrAmountMismatch) {
+		t.Fatalf("wrong amount: got %v", err)
+	}
+	if err := st.CompletePayment(ctx, p.Reference, p.AmountMinor, "GHS"); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.CompletePayment(ctx, p.Reference, p.AmountMinor, "GHS"); err != nil {
+		t.Fatalf("second call should be a no-op: %v", err)
+	}
+
+	next, err := st.NextInstallment(ctx, testIMEI)
+	if err != nil || next.Sequence != 2 {
+		t.Fatalf("after payment, next = %+v, %v; want #2", next, err)
+	}
+	if err := st.CompletePayment(ctx, "p2o_unknown", 1, "GHS"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("unknown reference: got %v", err)
 	}
 }

@@ -12,6 +12,7 @@ import (
 	"strings"
 	"testing"
 
+	"pay2own.com/backend/internal/paystack"
 	"pay2own.com/backend/internal/store"
 )
 
@@ -181,5 +182,92 @@ func TestPayRouteOffByDefault(t *testing.T) {
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("got %d, want 404", rec.Code)
+	}
+}
+
+func (f fakeInstallments) StartPayment(_ context.Context, imei string) (store.PendingPayment, error) {
+	if imei != phoneIMEI {
+		return store.PendingPayment{}, store.ErrNotFound
+	}
+	return store.PendingPayment{Reference: "p2o_test", Currency: "GHS", AmountMinor: 30000,
+		CustomerID: 1, Phone: "0551234987", Provider: "mtn"}, nil
+}
+
+func (f fakeInstallments) FailPayment(context.Context, string) error { return nil }
+
+func (f fakeInstallments) CompletePayment(context.Context, string, int64, string) error { return nil }
+
+type fakeCharger struct {
+	err error
+	got paystack.ChargeRequest
+}
+
+func (c *fakeCharger) Charge(_ context.Context, req paystack.ChargeRequest) (string, error) {
+	c.got = req
+	return "pay_offline", c.err
+}
+
+func (c *fakeCharger) Verify(context.Context, string) (paystack.Verification, error) {
+	return paystack.Verification{Status: "success", AmountMinor: 30000, Currency: "GHS"}, nil
+}
+
+func (c *fakeCharger) ValidSignature(_ []byte, sig string) bool { return sig == "good-sig" }
+
+func paymentRouter(ch Charger) http.Handler {
+	return NewRouter(fakeInstallments{}, slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Options{Charger: ch})
+}
+
+func postPayment(h http.Handler) *httptest.ResponseRecorder {
+	req := httptest.NewRequest(http.MethodPost, "/api/devices/"+phoneIMEI+"/payments", nil)
+	req.Header.Set("Authorization", "Bearer "+goodToken)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	return rec
+}
+
+func TestStartPaymentOK(t *testing.T) {
+	ch := &fakeCharger{}
+	rec := postPayment(paymentRouter(ch))
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want 202", rec.Code)
+	}
+	if ch.got.Email != "customer-1@pay2own.com" || ch.got.AmountMinor != 30000 || ch.got.Provider != "mtn" {
+		t.Fatalf("bad charge request: %+v", ch.got)
+	}
+}
+
+func TestStartPaymentProviderDown(t *testing.T) {
+	rec := postPayment(paymentRouter(&fakeCharger{err: errors.New("boom")}))
+	if rec.Code != http.StatusBadGateway {
+		t.Fatalf("status = %d, want 502", rec.Code)
+	}
+}
+
+func TestPaymentsOffWithoutCharger(t *testing.T) {
+	if rec := postPayment(paymentRouter(nil)); rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404", rec.Code)
+	}
+}
+
+func postWebhook(h http.Handler, sig, body string) int {
+	req := httptest.NewRequest(http.MethodPost, "/webhooks/paystack", strings.NewReader(body))
+	req.Header.Set("X-Paystack-Signature", sig)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	return rec.Code
+}
+
+func TestWebhookRejectsBadSignature(t *testing.T) {
+	body := `{"event":"charge.success","data":{"reference":"p2o_test"}}`
+	if code := postWebhook(paymentRouter(&fakeCharger{}), "forged", body); code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401", code)
+	}
+}
+
+func TestWebhookAcceptsSignedSuccess(t *testing.T) {
+	body := `{"event":"charge.success","data":{"reference":"p2o_test"}}`
+	if code := postWebhook(paymentRouter(&fakeCharger{}), "good-sig", body); code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", code)
 	}
 }

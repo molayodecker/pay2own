@@ -1,0 +1,5 @@
+TOKEN=$(go run ./cmd/pay2own-admin issue-token 000000000000001)
+sed -i '' '/^pay2own.deviceToken=/d' /Users/molayodecker/AndroidStudioProjects/Pay2Own/local.properties
+echo "pay2own.deviceToken=$TOKEN" >> /Users/molayodecker/AndroidStudioProjects/Pay2Own/local.properties
+
+curl -i -X POST -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8080/api/devices/000000000000001/payments
