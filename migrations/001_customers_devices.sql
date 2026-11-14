@@ -1,3 +1,4 @@
+-- +goose Up
 CREATE TABLE customers (
     id          BIGSERIAL PRIMARY KEY,
     full_name   TEXT NOT NULL,
@@ -12,3 +13,6 @@ CREATE TABLE devices (
     model        TEXT NOT NULL,
     created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+-- +goose Down
+DROP TABLE devices;
+DROP TABLE customers;

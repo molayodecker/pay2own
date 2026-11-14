@@ -1,3 +1,4 @@
+-- +goose Up
 CREATE TABLE loans (
     id                 BIGSERIAL PRIMARY KEY,
     device_id          BIGINT NOT NULL UNIQUE REFERENCES devices(id),
@@ -9,3 +10,5 @@ CREATE TABLE loans (
     created_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
     CHECK (deposit_minor < principal_minor)
 );
+-- +goose Down
+DROP TABLE loans;

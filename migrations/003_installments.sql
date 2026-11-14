@@ -1,3 +1,4 @@
+-- +goose Up
 CREATE TABLE installments (
     id            BIGSERIAL PRIMARY KEY,
     loan_id       BIGINT NOT NULL REFERENCES loans(id),
@@ -10,3 +11,5 @@ CREATE TABLE installments (
     UNIQUE (loan_id, sequence),
     CHECK ((status = 'paid') = (paid_at IS NOT NULL))
 );
+-- +goose Down
+DROP TABLE installments;
