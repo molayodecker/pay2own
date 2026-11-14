@@ -42,9 +42,14 @@ func run(log *slog.Logger) error {
 	}
 	defer db.Close()
 
+	testPay := os.Getenv("ENABLE_TEST_PAY") == "true"
+	if testPay {
+		log.Warn("test pay route enabled; never use in production")
+	}
+
 	srv := &http.Server{
 		Addr:              addr,
-		Handler:           httpapi.NewRouter(store.New(db), log),
+		Handler:           httpapi.NewRouter(store.New(db), log, httpapi.Options{EnableTestPay: testPay}),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       10 * time.Second,
 		WriteTimeout:      10 * time.Second,

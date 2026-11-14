@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -8,6 +9,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"pay2own.com/backend/internal/store"
@@ -62,14 +64,14 @@ func do(t *testing.T, h http.Handler, method, path, token string) *httptest.Resp
 func nextPath(imei string) string { return "/api/devices/" + imei + "/next-installment" }
 
 func TestHealth(t *testing.T) {
-	rec := do(t, NewRouter(fakeInstallments{}, quietLog), http.MethodGet, "/health", "")
+	rec := do(t, NewRouter(fakeInstallments{}, quietLog, Options{EnableTestPay: true}), http.MethodGet, "/health", "")
 	if rec.Code != http.StatusOK || rec.Body.String() != "Pay2Own backend is running\n" {
 		t.Fatalf("got %d %q", rec.Code, rec.Body.String())
 	}
 }
 
 func TestNextInstallmentOK(t *testing.T) {
-	rec := do(t, NewRouter(fakeInstallments{next: sample}, quietLog), http.MethodGet, nextPath(phoneIMEI), goodToken)
+	rec := do(t, NewRouter(fakeInstallments{next: sample}, quietLog, Options{EnableTestPay: true}), http.MethodGet, nextPath(phoneIMEI), goodToken)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d", rec.Code)
 	}
@@ -83,49 +85,49 @@ func TestNextInstallmentOK(t *testing.T) {
 }
 
 func TestMissingTokenIs401(t *testing.T) {
-	rec := do(t, NewRouter(fakeInstallments{next: sample}, quietLog), http.MethodGet, nextPath(phoneIMEI), "")
+	rec := do(t, NewRouter(fakeInstallments{next: sample}, quietLog, Options{EnableTestPay: true}), http.MethodGet, nextPath(phoneIMEI), "")
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("status = %d, want 401", rec.Code)
 	}
 }
 
 func TestWrongTokenIs401(t *testing.T) {
-	rec := do(t, NewRouter(fakeInstallments{next: sample}, quietLog), http.MethodGet, nextPath(phoneIMEI), "stolen-guess")
+	rec := do(t, NewRouter(fakeInstallments{next: sample}, quietLog, Options{EnableTestPay: true}), http.MethodGet, nextPath(phoneIMEI), "stolen-guess")
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("status = %d, want 401", rec.Code)
 	}
 }
 
 func TestOtherPhonesIMEIIs403(t *testing.T) {
-	rec := do(t, NewRouter(fakeInstallments{next: sample}, quietLog), http.MethodGet, nextPath(otherIMEI), goodToken)
+	rec := do(t, NewRouter(fakeInstallments{next: sample}, quietLog, Options{EnableTestPay: true}), http.MethodGet, nextPath(otherIMEI), goodToken)
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("status = %d, want 403", rec.Code)
 	}
 }
 
 func TestPayNeedsToken(t *testing.T) {
-	rec := do(t, NewRouter(fakeInstallments{next: sample}, quietLog), http.MethodPost, nextPath(phoneIMEI)+"/pay", "")
+	rec := do(t, NewRouter(fakeInstallments{next: sample}, quietLog, Options{EnableTestPay: true}), http.MethodPost, nextPath(phoneIMEI)+"/pay", "")
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("status = %d, want 401", rec.Code)
 	}
 }
 
 func TestBadIMEI(t *testing.T) {
-	rec := do(t, NewRouter(fakeInstallments{}, quietLog), http.MethodGet, nextPath("123"), goodToken)
+	rec := do(t, NewRouter(fakeInstallments{}, quietLog, Options{EnableTestPay: true}), http.MethodGet, nextPath("123"), goodToken)
 	if rec.Code != http.StatusForbidden && rec.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 403 or 400", rec.Code)
 	}
 }
 
 func TestNotFound(t *testing.T) {
-	rec := do(t, NewRouter(fakeInstallments{err: store.ErrNotFound}, quietLog), http.MethodGet, nextPath(phoneIMEI), goodToken)
+	rec := do(t, NewRouter(fakeInstallments{err: store.ErrNotFound}, quietLog, Options{EnableTestPay: true}), http.MethodGet, nextPath(phoneIMEI), goodToken)
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("status = %d, want 404", rec.Code)
 	}
 }
 
 func TestDatabaseErrorIsHidden(t *testing.T) {
-	rec := do(t, NewRouter(fakeInstallments{err: errors.New("connection refused")}, quietLog), http.MethodGet, nextPath(phoneIMEI), goodToken)
+	rec := do(t, NewRouter(fakeInstallments{err: errors.New("connection refused")}, quietLog, Options{EnableTestPay: true}), http.MethodGet, nextPath(phoneIMEI), goodToken)
 	if rec.Code != http.StatusInternalServerError {
 		t.Fatalf("status = %d, want 500", rec.Code)
 	}
@@ -135,7 +137,7 @@ func TestDatabaseErrorIsHidden(t *testing.T) {
 }
 
 func TestPayRoute(t *testing.T) {
-	rec := do(t, NewRouter(fakeInstallments{next: sample}, quietLog), http.MethodPost, nextPath(phoneIMEI)+"/pay", goodToken)
+	rec := do(t, NewRouter(fakeInstallments{next: sample}, quietLog, Options{EnableTestPay: true}), http.MethodPost, nextPath(phoneIMEI)+"/pay", goodToken)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d", rec.Code)
 	}
@@ -147,8 +149,37 @@ func TestPayRoute(t *testing.T) {
 }
 
 func TestPayRouteRejectsGet(t *testing.T) {
-	rec := do(t, NewRouter(fakeInstallments{}, quietLog), http.MethodGet, nextPath(phoneIMEI)+"/pay", goodToken)
+	rec := do(t, NewRouter(fakeInstallments{}, quietLog, Options{EnableTestPay: true}), http.MethodGet, nextPath(phoneIMEI)+"/pay", goodToken)
 	if rec.Code != http.StatusMethodNotAllowed {
 		t.Fatalf("status = %d, want 405", rec.Code)
+	}
+}
+
+func TestLogsHideIMEIAndToken(t *testing.T) {
+	var buf bytes.Buffer
+	log := slog.New(slog.NewJSONHandler(&buf, nil))
+	h := NewRouter(fakeInstallments{}, log, Options{EnableTestPay: true})
+
+	req := httptest.NewRequest(http.MethodGet, nextPath(phoneIMEI), nil)
+	req.Header.Set("Authorization", "Bearer "+goodToken)
+	h.ServeHTTP(httptest.NewRecorder(), req)
+
+	out := buf.String()
+	if !strings.Contains(out, `"route":"GET /api/devices/{imei}/next-installment"`) {
+		t.Fatalf("route missing from log: %s", out)
+	}
+	if strings.Contains(out, phoneIMEI) || strings.Contains(out, goodToken) {
+		t.Fatalf("log leaked IMEI or token: %s", out)
+	}
+}
+
+func TestPayRouteOffByDefault(t *testing.T) {
+	h := NewRouter(fakeInstallments{}, slog.New(slog.NewTextHandler(io.Discard, nil)), Options{})
+	req := httptest.NewRequest(http.MethodPost, nextPath(phoneIMEI)+"/pay", nil)
+	req.Header.Set("Authorization", "Bearer "+goodToken)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("got %d, want 404", rec.Code)
 	}
 }

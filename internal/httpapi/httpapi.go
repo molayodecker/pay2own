@@ -19,16 +19,22 @@ type Installments interface {
 	DeviceIMEIByToken(ctx context.Context, token string) (string, error)
 }
 
+type Options struct {
+	EnableTestPay bool // dev only: lets a device mark its own installment paid
+}
+
 var imeiPattern = regexp.MustCompile(`^[0-9]{15}$`)
 
-func NewRouter(inst Installments, log *slog.Logger) http.Handler {
+func NewRouter(inst Installments, log *slog.Logger, opts Options) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", health)
 	mux.HandleFunc("GET /api/devices/{imei}/next-installment",
 		requireDevice(inst, log, installmentHandler(inst.NextInstallment, log)))
-	mux.HandleFunc("POST /api/devices/{imei}/next-installment/pay",
-		requireDevice(inst, log, installmentHandler(inst.PayNextInstallment, log)))
-	return mux
+	if opts.EnableTestPay {
+		mux.HandleFunc("POST /api/devices/{imei}/next-installment/pay",
+			requireDevice(inst, log, installmentHandler(inst.PayNextInstallment, log)))
+	}
+	return logRequests(log, mux, mux)
 }
 
 func health(w http.ResponseWriter, _ *http.Request) {
