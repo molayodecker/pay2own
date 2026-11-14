@@ -14,6 +14,7 @@ import (
 
 // ErrNotFound means the row we asked for doesn't exist.
 var ErrNotFound = errors.New("not found")
+var ErrAlreadyPending = errors.New("payment already pending")
 
 type NextInstallment struct {
 	IMEI        string `json:"imei"`
@@ -22,6 +23,16 @@ type NextInstallment struct {
 	Currency    string `json:"currency"`
 	AmountMinor int64  `json:"amount_minor"`
 	Status      string `json:"status"`
+}
+
+type PendingPayment struct {
+	Reference     string
+	InstallmentID int64
+	Currency      string
+	AmountMinor   int64
+	CustomerID    int64
+	Phone         string
+	Provider      string
 }
 
 // Store wraps the database. Everything that talks to Postgres goes through it.
@@ -123,4 +134,56 @@ func (s *Store) DeviceIMEIByToken(ctx context.Context, token string) (string, er
 		return "", ErrNotFound
 	}
 	return imei, err
+}
+
+// StartPayment creates a pending payment for the device's next unpaid installment.
+func (s *Store) StartPayment(ctx context.Context, imei string) (PendingPayment, error) {
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		return PendingPayment{}, err
+	}
+	p := PendingPayment{Reference: "p2o_" + hex.EncodeToString(b)}
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return PendingPayment{}, err
+	}
+	defer tx.Rollback()
+
+	err = tx.QueryRowContext(ctx, `
+	SELECT i.id, l.currency, i.amount_minor, c.id, c.phone, c.momo_provider
+	FROM installments i
+	JOIN loans l ON l.id = i.loan_id
+	JOIN devices d ON d.id = l.device_id
+	JOIN customers c ON c.id = d.customer_id
+	WHERE d.imei = $1 AND l.status = 'active' AND i.status = 'unpaid'
+	ORDER BY i.sequence
+	LIMIT 1
+	FOR UPDATE OF i`, imei).Scan(&p.InstallmentID, &p.Currency, &p.AmountMinor,
+	&p.CustomerID, &p.Phone, &p.Provider)
+	
+	if errors.Is(err, sql.ErrNoRows) {
+		return PendingPayment{}, ErrNotFound
+	}
+	if err != nil {
+		return PendingPayment{}, err
+	}
+
+	var pending bool
+	if err := tx.QueryRowContext(ctx, `
+		SELECT EXISTS (SELECT 1 FROM payments
+		  WHERE installment_id = $1 AND status = 'pending'
+		  AND created_at > now() - interval '10 minutes')`, p.InstallmentID).Scan(&pending); err != nil {
+		return PendingPayment{}, err
+	}
+	if pending {
+		return PendingPayment{}, ErrAlreadyPending
+	}
+
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO payments (installment_id, reference, currency, amount_minor)
+		VALUES ($1, $2, $3, $4)`, p.InstallmentID, p.Reference, p.Currency, p.AmountMinor); err != nil {
+		return PendingPayment{}, err
+	}
+	return p, tx.Commit()
 }

@@ -3,7 +3,9 @@ package store
 import (
 	"context"
 	"os"
+	"strings"
 	"testing"
+	"errors"
 )
 
 const testIMEI = "000000000000001"
@@ -23,14 +25,17 @@ func openTestStore(t *testing.T) *Store {
 	return New(db)
 }
 
-// resetInstallments marks every installment for loan 1 unpaid, now and after the test.
+// resetInstallments clears payments and marks every installment for loan 1 unpaid, now and after the test.
 func resetInstallments(t *testing.T, st *Store) {
 	t.Helper()
 	reset := func() {
-		_, err := st.db.ExecContext(context.Background(),
-			`UPDATE installments SET status = 'unpaid', paid_at = NULL WHERE loan_id = 1`)
-		if err != nil {
-			t.Fatalf("reset: %v", err)
+		ctx := context.Background()
+		if _, err := st.db.ExecContext(ctx, `DELETE FROM payments`); err != nil {
+			t.Fatalf("reset payments: %v", err)
+		}
+		if _, err := st.db.ExecContext(ctx,
+			`UPDATE installments SET status = 'unpaid', paid_at = NULL WHERE loan_id = 1`); err != nil {
+			t.Fatalf("reset installments: %v", err)
 		}
 	}
 	reset()
@@ -106,5 +111,29 @@ func TestDeviceTokenLifecycle(t *testing.T) {
 	}
 	if _, err := st.IssueDeviceToken(ctx, "999999999999999"); err != ErrNotFound {
 		t.Fatalf("unknown device: err = %v, want ErrNotFound", err)
+	}
+}
+func TestStartPayment(t *testing.T) {
+	st := openTestStore(t)
+	resetInstallments(t, st)
+	ctx := context.Background()
+
+	p, err := st.StartPayment(ctx, testIMEI)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(p.Reference, "p2o_") || p.AmountMinor != 30000 || p.Currency != "GHS" {
+		t.Fatalf("unexpected payment: %+v", p)
+	}
+	if p.CustomerID != 1 || p.Provider != "mtn" || p.Phone == "" {
+		t.Fatalf("missing customer details: %+v", p)
+	}
+
+	if _, err := st.StartPayment(ctx, testIMEI); !errors.Is(err, ErrAlreadyPending) {
+		t.Fatalf("second start: got %v, want ErrAlreadyPending", err)
+	}
+
+	if _, err := st.StartPayment(ctx, "999999999999999"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("unknown device: got %v, want ErrNotFound", err)
 	}
 }
