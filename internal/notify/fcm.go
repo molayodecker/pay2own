@@ -37,14 +37,22 @@ type serviceAccount struct {
 	PrivateKey string `json:"private_key"`
 }
 
-// NewFCM reads a Firebase service account file. A missing path disables push.
+// NewFCM reads a Firebase service account file. When the path is empty, it
+// uses FIREBASE_SERVICE_ACCOUNT (the JSON itself) so a host can pass the key
+// without a file. With neither set, push is disabled.
 func NewFCM(path string) (*FCM, error) {
-	if path == "" {
+	var raw []byte
+	var err error
+	switch {
+	case path != "":
+		raw, err = os.ReadFile(path)
+		if err != nil {
+			return nil, err
+		}
+	case os.Getenv("FIREBASE_SERVICE_ACCOUNT") != "":
+		raw = []byte(os.Getenv("FIREBASE_SERVICE_ACCOUNT"))
+	default:
 		return nil, nil
-	}
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		return nil, err
 	}
 	var sa serviceAccount
 	if err := json.Unmarshal(raw, &sa); err != nil {

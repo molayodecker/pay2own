@@ -19,6 +19,7 @@ var ErrAlreadyPending = errors.New("payment already pending")
 var ErrAmountMismatch = errors.New("payment amount mismatch")
 var ErrBadRequest = errors.New("bad request")
 var ErrNotReleasable = errors.New("device is not pending release")
+var ErrNotActivatable = errors.New("device cannot be restricted")
 
 type NextInstallment struct {
 	IMEI        string `json:"imei"`
@@ -333,6 +334,7 @@ type Sale struct {
 	DepositMinor int64
 	Weeks        int
 	FirstDue     time.Time
+	Restrict     bool // turn financing restrictions on in the same transaction
 }
 
 // Schedule splits what's owed into weekly installments; any leftover pesewas go on the last one.
@@ -369,6 +371,12 @@ func (s *Store) CreateSale(ctx context.Context, sale Sale) (loanID int64, err er
 		customerID, sale.IMEI, sale.Model).Scan(&deviceID); err != nil {
 		return 0, fmt.Errorf("device: %w", err)
 	}
+	if sale.Restrict {
+		if _, err := tx.ExecContext(ctx, `
+			UPDATE devices SET restriction_state = 'active' WHERE id = $1`, deviceID); err != nil {
+			return 0, fmt.Errorf("restrict device: %w", err)
+		}
+	}
 	if err := tx.QueryRowContext(ctx, `
 		INSERT INTO loans (device_id, principal_minor, deposit_minor) VALUES ($1, $2, $3) RETURNING id`,
 		deviceID, sale.PriceMinor, sale.DepositMinor).Scan(&loanID); err != nil {
@@ -383,6 +391,64 @@ func (s *Store) CreateSale(ctx context.Context, sale Sale) (loanID int64, err er
 		}
 	}
 	return loanID, tx.Commit()
+}
+
+// AdminDevice is the shop view of one financed phone.
+type AdminDevice struct {
+	IMEI             string
+	Model            string
+	CustomerName     string
+	Phone            string
+	Provider         string
+	LoanID           int64
+	PriceMinor       int64
+	DepositMinor     int64
+	RestrictionState string
+}
+
+// DeviceForAdmin loads the customer, loan, and restriction state for a phone.
+func (s *Store) DeviceForAdmin(ctx context.Context, imei string) (AdminDevice, error) {
+	var d AdminDevice
+	err := s.db.QueryRowContext(ctx, `
+		SELECT d.imei, d.model, c.full_name, c.phone, c.momo_provider,
+		       l.id, l.principal_minor, l.deposit_minor, d.restriction_state
+		FROM devices d
+		JOIN customers c ON c.id = d.customer_id
+		JOIN loans l ON l.device_id = d.id
+		WHERE d.imei = $1`, imei).Scan(
+		&d.IMEI, &d.Model, &d.CustomerName, &d.Phone, &d.Provider,
+		&d.LoanID, &d.PriceMinor, &d.DepositMinor, &d.RestrictionState,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return AdminDevice{}, ErrNotFound
+	}
+	return d, err
+}
+
+// ActivateDevice turns financing restrictions on. A phone that is already
+// active stays active. A phone that is unlocking or already released is left alone.
+func (s *Store) ActivateDevice(ctx context.Context, imei string) error {
+	res, err := s.db.ExecContext(ctx, `
+		UPDATE devices SET restriction_state = 'active'
+		WHERE imei = $1 AND restriction_state = 'not_enrolled'`, imei)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 1 {
+		return nil
+	}
+	state, err := s.DeviceRestrictionState(ctx, imei)
+	if err != nil {
+		return err
+	}
+	if state == "active" {
+		return nil
+	}
+	return ErrNotActivatable
 }
 
 // DeviceRestrictionState returns the restriction state for the device with this IMEI.

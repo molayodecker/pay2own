@@ -260,6 +260,47 @@ func TestCreateSale(t *testing.T) {
 	}
 }
 
+func TestActivateDevice(t *testing.T) {
+	st := openTestStore(t)
+	ctx := context.Background()
+	imei := "000000000000098"
+	t.Cleanup(func() {
+		st.db.ExecContext(ctx, `DELETE FROM installments WHERE loan_id IN
+			(SELECT l.id FROM loans l JOIN devices d ON d.id = l.device_id WHERE d.imei = $1)`, imei)
+		st.db.ExecContext(ctx, `DELETE FROM loans WHERE device_id IN (SELECT id FROM devices WHERE imei = $1)`, imei)
+		st.db.ExecContext(ctx, `DELETE FROM devices WHERE imei = $1`, imei)
+		st.db.ExecContext(ctx, `DELETE FROM customers WHERE phone = '0559999998'`)
+	})
+	first := time.Date(2026, 12, 1, 0, 0, 0, 0, time.UTC)
+	_, err := st.CreateSale(ctx, Sale{
+		FullName: "Kofi Shop", Phone: "0559999998", Provider: "vod",
+		IMEI: imei, Model: "BLU G33", PriceMinor: 150000, DepositMinor: 30000,
+		Weeks: 4, FirstDue: first, Restrict: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := st.DeviceForAdmin(ctx, imei)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.CustomerName != "Kofi Shop" || got.RestrictionState != "active" || got.PriceMinor != 150000 {
+		t.Fatalf("device %+v", got)
+	}
+	if err := st.ActivateDevice(ctx, imei); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.db.ExecContext(ctx, `UPDATE devices SET restriction_state = 'released' WHERE imei = $1`, imei); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.ActivateDevice(ctx, imei); !errors.Is(err, ErrNotActivatable) {
+		t.Fatalf("released phone: %v", err)
+	}
+	if err := st.ActivateDevice(ctx, "000000000000097"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("missing phone: %v", err)
+	}
+}
+
 func TestPaySeveralInstallments(t *testing.T) {
 	st := openTestStore(t)
 	resetInstallments(t, st)

@@ -7,9 +7,11 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
+	"pay2own.com/backend/internal/admin"
 	"pay2own.com/backend/internal/httpapi"
 	"pay2own.com/backend/internal/notify"
 	"pay2own.com/backend/internal/paystack"
@@ -60,9 +62,29 @@ func run(log *slog.Logger) error {
 		return err
 	}
 
-	handler := httpapi.NewRouter(store.New(db), log, httpapi.Options{
+	st := store.New(db)
+	apiHandler := httpapi.NewRouter(st, log, httpapi.Options{
 		Charger: paystack.New(key),
 		Notify:  alerts,
+	})
+	shop := admin.New(st, os.Getenv("ADMIN_PASSWORD"), []byte(os.Getenv("ADMIN_SESSION_SECRET")), admin.Provision{
+		APKURL:            os.Getenv("PROVISIONING_APK_URL"),
+		SignatureChecksum: os.Getenv("PROVISIONING_SIGNATURE_CHECKSUM"),
+		PackageChecksum:   os.Getenv("PROVISIONING_APK_CHECKSUM"),
+		WifiSSID:          os.Getenv("PROVISIONING_WIFI_SSID"),
+		WifiPassword:      os.Getenv("PROVISIONING_WIFI_PASSWORD"),
+		WifiSecurity:      os.Getenv("PROVISIONING_WIFI_SECURITY"),
+	}, log)
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/pay2own.apk" {
+			serveAPK(w, r)
+			return
+		}
+		if strings.HasPrefix(r.URL.Path, "/admin") {
+			shop.ServeHTTP(w, r)
+			return
+		}
+		apiHandler.ServeHTTP(w, r)
 	})
 
 	srv := &http.Server{
@@ -90,4 +112,14 @@ func run(log *slog.Logger) error {
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	return srv.Shutdown(shutdownCtx)
+}
+
+func serveAPK(w http.ResponseWriter, r *http.Request) {
+	path := os.Getenv("APK_PATH")
+	if path == "" {
+		http.NotFound(w, r)
+		return
+	}
+	w.Header().Set("Content-Type", "application/vnd.android.package-archive")
+	http.ServeFile(w, r, path)
 }

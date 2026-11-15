@@ -1,0 +1,54 @@
+{{define "handoff"}}
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Enroll phone · Pay2Own shop</title>
+  {{template "style" .}}
+</head>
+<body>
+  <div class="app">
+    {{template "bar" .}}
+    <div class="canvas">
+      <h1>Enroll this phone</h1>
+      <p class="lede">This token is shown once. Issuing another one turns this one off.</p>
+      <section class="panel">
+        <dl class="facts">
+          <dt>Customer</dt><dd>{{.Name}}</dd>
+          <dt>Phone</dt><dd>{{.Phone}}</dd>
+          <dt>Model</dt><dd>{{.Model}}</dd>
+          <dt>IMEI</dt><dd>{{.IMEI}}</dd>
+          <dt>Price</dt><dd>GHS {{.Price}}</dd>
+          <dt>Deposit</dt><dd>GHS {{.Deposit}}</dd>
+          <dt>Restrictions</dt><dd>active</dd>
+        </dl>
+      </section>
+      <div class="steps">
+        <section class="panel step">
+          <p class="kicker">01</p>
+          <h2>Device owner</h2>
+          <p class="lede">Factory-reset the phone. On the welcome screen, tap the same spot six times, then scan this code. Do this before a Google account is added.</p>
+          {{if .ProvisionQR}}
+            <div class="qr"><img alt="QR code that installs Pay2Own as device owner" src="{{.ProvisionQR}}"></div>
+          {{else}}
+            <p class="error">The device-owner QR is not configured. Set PROVISIONING_APK_URL and PROVISIONING_SIGNATURE_CHECKSUM, then issue the token again.</p>
+          {{end}}
+        </section>
+        <section class="panel step">
+          <p class="kicker">02</p>
+          <h2>This loan</h2>
+          <p class="lede">After Pay2Own opens, scan this code. It fills in the IMEI and token.</p>
+          <div class="qr"><img alt="QR code that enrolls this phone" src="{{.EnrollQR}}"></div>
+          <p>Or type this token into the app:</p>
+          <p class="token">{{.Token}}</p>
+          <p>Enroll link:</p>
+          <p class="token">{{.EnrollURL}}</p>
+        </section>
+      </div>
+      <p><a class="button" href="/admin/devices/{{.IMEI}}">Phone record</a></p>
+    </div>
+  </div>
+</body>
+</html>
+{{end}}
