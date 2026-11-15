@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"errors"
 	"net/http"
 	"strconv"
 	"time"
@@ -35,6 +36,10 @@ type ChargeRequest struct {
 	Phone       string // e.g. 0551234987
 	Provider    string // "mtn", "vod" (Telecel) or "atl" (AT)
 }
+
+// ErrChargeRejected means Paystack definitively refused the charge request.
+// Network failures and malformed responses are ambiguous and must be reconciled.
+var ErrChargeRejected = errors.New("paystack definitively rejected charge")
 
 type Verification struct {
 	Status      string // "success", "failed", "abandoned", ...
@@ -67,7 +72,7 @@ func (c *Client) Charge(ctx context.Context, req ChargeRequest) (string, error) 
 		return "", err
 	}
 	if !out.Status {
-		return "", fmt.Errorf("paystack charge refused: %s (data.status=%s, data.message=%s, gateway=%s)",
+		return "", fmt.Errorf("%w: %s (data.status=%s, data.message=%s, gateway=%s)", ErrChargeRejected,
 			out.Message, out.Data.Status, out.Data.Message, out.Data.GatewayResponse)
 	}
 	return out.Data.Status, nil
