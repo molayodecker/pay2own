@@ -383,3 +383,35 @@ func TestReleaseConfirmed(t *testing.T) {
 		t.Fatalf("status = %d, want 401", rec.Code)
 	}
 }
+
+type receiptStore struct { fakeInstallments }
+
+func (f receiptStore) PaymentContact(context.Context, string) (store.PaymentContact, error) {
+	return store.PaymentContact{Phone: "0551234987", AmountMinor: 30000, Currency: "GHS"}, nil
+}
+
+type receiptSender struct { sms int }
+
+func (s *receiptSender) SendPush(context.Context, string, string, string) error { return nil }
+func (s *receiptSender) SendSMS(context.Context, string, string) error {
+	s.sms++
+	return nil
+}
+
+func TestPollSendsPaymentReceiptOnlyOnFirstCompletion(t *testing.T) {
+	state := &store.PaymentRecord{Reference: "p2o_test", Status: "pending", Currency: "GHS", AmountMinor: 30000}
+	sender := &receiptSender{}
+	h := NewRouter(receiptStore{fakeInstallments{state: state}}, quietLog, Options{
+		Charger: &fakeCharger{}, Notify: sender,
+	})
+	path := "/api/devices/" + phoneIMEI + "/payments/p2o_test"
+	if rec := do(t, h, http.MethodGet, path, goodToken); rec.Code != http.StatusOK {
+		t.Fatalf("poll response %d", rec.Code)
+	}
+	if rec := do(t, h, http.MethodGet, path, goodToken); rec.Code != http.StatusOK {
+		t.Fatalf("repeat poll response %d", rec.Code)
+	}
+	if sender.sms != 1 {
+		t.Fatalf("receipt sent %d times, expected exactly 1", sender.sms)
+	}
+}
