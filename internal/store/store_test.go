@@ -354,3 +354,37 @@ func TestLoanSummary(t *testing.T) {
 		t.Fatal("terms missing")
 	}
 }
+
+func TestPendingPaymentDoesNotExpireWithoutReconciliation(t *testing.T) {
+	st := openTestStore(t)
+	resetInstallments(t, st)
+	ctx := context.Background()
+	first, err := st.StartPayment(ctx, testIMEI, 1)
+	if err != nil { t.Fatal(err) }
+	_, err = st.db.ExecContext(ctx, `UPDATE payments SET created_at = now() - interval '1 hour' WHERE reference = $1`, first.Reference)
+	if err != nil { t.Fatal(err) }
+	if _, err = st.StartPayment(ctx, testIMEI, 1); !errors.Is(err, ErrAlreadyPending) {
+		t.Fatalf("old unresolved payment must block a new charge: %v", err)
+	}
+}
+
+func TestCannotActivatePaidOffDevice(t *testing.T) {
+	st := openTestStore(t)
+	resetInstallments(t, st)
+	ctx := context.Background()
+	_, err := st.db.ExecContext(ctx, `UPDATE devices SET restriction_state = 'not_enrolled' WHERE imei = $1`, testIMEI)
+	if err != nil { t.Fatal(err) }
+	t.Cleanup(func() {
+		st.db.ExecContext(ctx, `UPDATE devices SET restriction_state = 'not_enrolled' WHERE imei = $1`, testIMEI)
+	})
+	_, err = st.db.ExecContext(ctx, `UPDATE installments SET status = 'paid', paid_at = now() WHERE loan_id = 1`)
+	if err != nil { t.Fatal(err) }
+	_, err = st.db.ExecContext(ctx, `UPDATE loans SET status = 'paid_off' WHERE id = 1`)
+	if err != nil { t.Fatal(err) }
+	if err = st.ActivateDevice(ctx, testIMEI); !errors.Is(err, ErrNotActivatable) {
+		t.Fatalf("paid off loan should not be restricted: %v", err)
+	}
+	if state, err := st.DeviceRestrictionState(ctx, testIMEI); err != nil || state != "not_enrolled" {
+		t.Fatalf("unexpected state %q, %v", state, err)
+	}
+}
