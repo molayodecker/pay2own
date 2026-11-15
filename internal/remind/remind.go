@@ -136,14 +136,16 @@ func deliver(ctx context.Context, item Planned, claims Claims, sender notify.Sen
 	if item.PushToken != "" {
 		channels = []string{"push", "sms"}
 	}
+	// One claim covers all delivery channels. A successful fallback must
+	// suppress later pushes for the same reminder on the same day.
+	claimed, err := claims.Claim(ctx, item.InstallmentID, item.Kind, "push", today)
+	if err != nil {
+		return false, err
+	}
+	if !claimed {
+		return false, nil
+	}
 	for _, channel := range channels {
-		claimed, err := claims.Claim(ctx, item.InstallmentID, item.Kind, channel, today)
-		if err != nil {
-			return false, err
-		}
-		if !claimed {
-			return false, nil
-		}
 		var sendErr error
 		if channel == "push" {
 			_, sendErr = notify.Deliver(ctx, pushOnly{sender}, item.PushToken, "", item.Title, item.Body)
@@ -153,9 +155,9 @@ func deliver(ctx context.Context, item Planned, claims Claims, sender notify.Sen
 		if sendErr == nil {
 			return true, nil
 		}
-		if err := claims.Release(ctx, item.InstallmentID, item.Kind, channel, today); err != nil {
-			return false, err
 		}
+	if err := claims.Release(ctx, item.InstallmentID, item.Kind, "push", today); err != nil {
+		return false, err
 	}
 	return false, nil
 }
