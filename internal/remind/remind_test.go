@@ -106,3 +106,41 @@ func TestRunDoesNotSendTwice(t *testing.T) {
 		t.Fatalf("sent=%d err=%v texts=%d", sent, err, sender.texts)
 	}
 }
+
+func TestSMSFallbackSuppressesLaterPush(t *testing.T) {
+	today := time.Date(2026, 11, 14, 0, 0, 0, 0, time.UTC)
+	rows := []Candidate{{
+		InstallmentID: 11, Sequence: 1, Count: 4,
+		Due: today, AmountMinor: 1000, Currency: "GHS",
+		PushToken: "tok", Phone: "0550000000",
+	}}
+	claims := &memClaims{}
+	sender := &scripted{pushErr: errors.New("temporarily down")}
+	if sent, err := Run(context.Background(), rows, claims, sender, today); err != nil || sent != 1 {
+		t.Fatalf("fallback sent=%d err=%v", sent, err)
+	}
+	sender.pushErr = nil
+	if sent, err := Run(context.Background(), rows, claims, sender, today); err != nil || sent != 0 {
+		t.Fatalf("rerun sent=%d err=%v", sent, err)
+	}
+	if sender.pushes != 1 || sender.texts != 1 {
+		t.Fatalf("duplicate delivery: pushes=%d sms=%d", sender.pushes, sender.texts)
+	}
+}
+
+func TestSMSOnlyThenPushRegistrationDoesNotResend(t *testing.T) {
+	today := time.Date(2026, 11, 14, 0, 0, 0, 0, time.UTC)
+	rows := []Candidate{{InstallmentID: 12, Due: today, Phone: "0550000000"}}
+	claims := &memClaims{}
+	sender := &scripted{}
+	if sent, err := Run(context.Background(), rows, claims, sender, today); err != nil || sent != 1 {
+		t.Fatalf("initial sent=%d err=%v", sent, err)
+	}
+	rows[0].PushToken = "new-token"
+	if sent, err := Run(context.Background(), rows, claims, sender, today); err != nil || sent != 0 {
+		t.Fatalf("rerun sent=%d err=%v", sent, err)
+	}
+	if sender.texts != 1 || sender.pushes != 0 {
+		t.Fatalf("duplicate delivery: pushes=%d sms=%d", sender.pushes, sender.texts)
+	}
+}
