@@ -140,7 +140,7 @@ func (s *Store) LoanSummary(ctx context.Context, imei string) (LoanSummary, erro
 		JOIN loans l ON l.id = i.loan_id
 		JOIN devices d ON d.id = l.device_id
 		WHERE d.imei = $1 AND p.status = 'pending'
-		  AND p.created_at > now() - interval '10 minutes'
+		  
 		ORDER BY p.created_at DESC
 		LIMIT 1`, imei).Scan(&pending)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
