@@ -61,7 +61,7 @@ func NewRouter(inst Installments, log *slog.Logger, opts Options) http.Handler {
 	mux.HandleFunc("GET /api/devices/{imei}/payments",
 		requireDevice(inst, log, paymentsHandler(inst, log)))
 	mux.HandleFunc("GET /api/devices/{imei}/payments/{reference}",
-		requireDevice(inst, log, paymentHandler(inst, opts.Charger, log)))
+		requireDevice(inst, log, paymentHandler(inst, opts.Charger, opts.Notify, log)))
 	mux.HandleFunc("POST /api/devices/{imei}/push-token",
 		requireDevice(inst, log, pushTokenHandler(inst, log)))
 	if opts.Charger != nil {
@@ -184,8 +184,12 @@ func startPaymentHandler(inst Installments, ch Charger, log *slog.Logger) http.H
 		})
 		if err != nil {
 			log.Error("paystack charge", "reference", p.Reference, "err", err)
-			if ferr := inst.FailPayment(context.WithoutCancel(ctx), p.Reference); ferr != nil {
-				log.Error("fail payment", "reference", p.Reference, "err", ferr)
+			// Only a definitive provider refusal can safely free this installment.
+			// An HTTP timeout may have occurred after Paystack accepted the charge.
+			if errors.Is(err, paystack.ErrChargeRejected) {
+				if ferr := inst.FailPayment(context.WithoutCancel(ctx), p.Reference); ferr != nil {
+					log.Error("fail payment", "reference", p.Reference, "err", ferr)
+				}
 			}
 			http.Error(w, "Payment provider unavailable", http.StatusBadGateway)
 			return
