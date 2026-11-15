@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"pay2own.com/backend/internal/store"
+	"pay2own.com/backend/internal/notify"
 )
 
 func loanHandler(inst Installments, log *slog.Logger) http.HandlerFunc {
@@ -47,7 +48,7 @@ func paymentsHandler(inst Installments, log *slog.Logger) http.HandlerFunc {
 	}
 }
 
-func paymentHandler(inst Installments, ch Charger, log *slog.Logger) http.HandlerFunc {
+func paymentHandler(inst Installments, ch Charger, alerts notify.Sender, log *slog.Logger) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
 		defer cancel()
@@ -69,8 +70,11 @@ func paymentHandler(inst Installments, ch Charger, log *slog.Logger) http.Handle
 			} else {
 				switch v.Status {
 				case "success":
-					if _, err := inst.CompletePayment(ctx, rec.Reference, v.AmountMinor, v.Currency); err != nil && !errors.Is(err, store.ErrNotFound) {
+					fresh, err := inst.CompletePayment(ctx, rec.Reference, v.AmountMinor, v.Currency)
+					if err != nil {
 						log.Error("complete payment", "reference", rec.Reference, "err", err)
+					} else if fresh {
+						notifyPayment(ctx, inst, alerts, log, rec.Reference, v.AmountMinor, v.Currency)
 					}
 				case "failed", "abandoned", "reversed":
 					if err := inst.FailPayment(ctx, rec.Reference); err != nil {
