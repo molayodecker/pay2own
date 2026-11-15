@@ -196,7 +196,7 @@ func (s *Store) StartPayment(ctx context.Context, imei string, count int) (Pendi
 		  JOIN loans l ON l.id = i.loan_id
 		  JOIN devices d ON d.id = l.device_id
 		  WHERE d.imei = $1 AND p.status = 'pending'
-		    AND p.created_at > now() - interval '10 minutes'
+		    
 		)`, imei).Scan(&pending); err != nil {
 		return PendingPayment{}, err
 	}
@@ -362,7 +362,8 @@ func (s *Store) CreateSale(ctx context.Context, sale Sale) (loanID int64, err er
 	var customerID, deviceID int64
 	if err := tx.QueryRowContext(ctx, `
 		INSERT INTO customers (full_name, phone, momo_provider) VALUES ($1, $2, $3)
-		ON CONFLICT (phone) DO UPDATE SET full_name = EXCLUDED.full_name
+		ON CONFLICT (phone) DO UPDATE SET full_name = EXCLUDED.full_name,
+			momo_provider = EXCLUDED.momo_provider
 		RETURNING id`, sale.FullName, sale.Phone, sale.Provider).Scan(&customerID); err != nil {
 		return 0, fmt.Errorf("customer: %w", err)
 	}
@@ -430,7 +431,13 @@ func (s *Store) DeviceForAdmin(ctx context.Context, imei string) (AdminDevice, e
 func (s *Store) ActivateDevice(ctx context.Context, imei string) error {
 	res, err := s.db.ExecContext(ctx, `
 		UPDATE devices SET restriction_state = 'active'
-		WHERE imei = $1 AND restriction_state = 'not_enrolled'`, imei)
+		WHERE imei = $1 AND restriction_state = 'not_enrolled'
+		  AND EXISTS (
+		    SELECT 1 FROM loans l
+		    JOIN installments i ON i.loan_id = l.id
+		    WHERE l.device_id = devices.id AND l.status = 'active'
+		      AND i.status = 'unpaid'
+		  )`, imei)
 	if err != nil {
 		return err
 	}
