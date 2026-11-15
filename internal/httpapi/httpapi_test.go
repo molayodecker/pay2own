@@ -23,8 +23,15 @@ const (
 )
 
 type fakeInstallments struct {
-	next store.NextInstallment
-	err  error
+	next             store.NextInstallment
+	err              error
+	summary          *store.LoanSummary
+	payments         []store.PaymentRecord
+	gotCount         *int
+	state            *store.PaymentRecord
+	restrictionState string
+	restrictionErr   error
+	releaseErr       error
 }
 
 func (f fakeInstallments) NextInstallment(_ context.Context, imei string) (store.NextInstallment, error) {
@@ -141,7 +148,10 @@ func TestLogsHideIMEIAndToken(t *testing.T) {
 	}
 }
 
-func (f fakeInstallments) StartPayment(_ context.Context, imei string) (store.PendingPayment, error) {
+func (f fakeInstallments) StartPayment(_ context.Context, imei string, count int) (store.PendingPayment, error) {
+	if f.gotCount != nil {
+		*f.gotCount = count
+	}
 	if imei != phoneIMEI {
 		return store.PendingPayment{}, store.ErrNotFound
 	}
@@ -149,9 +159,50 @@ func (f fakeInstallments) StartPayment(_ context.Context, imei string) (store.Pe
 		CustomerID: 1, Phone: "0551234987", Provider: "mtn"}, nil
 }
 
-func (f fakeInstallments) FailPayment(context.Context, string) error { return nil }
+func (f fakeInstallments) FailPayment(context.Context, string) error {
+	if f.state != nil {
+		f.state.Status = "failed"
+	}
+	return nil
+}
 
-func (f fakeInstallments) CompletePayment(context.Context, string, int64, string) error { return nil }
+func (f fakeInstallments) CompletePayment(_ context.Context, reference string, amount int64, currency string) (bool, error) {
+	if f.state != nil {
+		f.state.Status = "success"
+		f.state.AmountMinor = amount
+		f.state.Currency = currency
+		f.state.Reference = reference
+	}
+	return true, nil
+}
+
+func (f fakeInstallments) LoanSummary(context.Context, string) (store.LoanSummary, error) {
+	if f.summary == nil {
+		return store.LoanSummary{}, store.ErrNotFound
+	}
+	return *f.summary, nil
+}
+
+func (f fakeInstallments) ListPayments(context.Context, string) ([]store.PaymentRecord, error) {
+	if f.payments == nil {
+		return []store.PaymentRecord{}, f.err
+	}
+	return f.payments, nil
+}
+
+func (f fakeInstallments) Payment(_ context.Context, _, ref string) (store.PaymentRecord, error) {
+	if f.state != nil && (f.state.Reference == ref || f.state.Reference == "") {
+		return *f.state, nil
+	}
+	for _, p := range f.payments {
+		if p.Reference == ref {
+			return p, nil
+		}
+	}
+	return store.PaymentRecord{}, store.ErrNotFound
+}
+
+func (f fakeInstallments) SavePushToken(context.Context, string, string) error { return nil }
 
 type fakeCharger struct {
 	err error
@@ -221,9 +272,114 @@ func TestWebhookRejectsBadSignature(t *testing.T) {
 	}
 }
 
+func TestLoanSummaryRequiresToken(t *testing.T) {
+	masked := "055•••4987"
+	h := NewRouter(fakeInstallments{summary: &store.LoanSummary{
+		CustomerName: "Ama", PhoneMasked: masked, AccountStatus: "up_to_date", Terms: "Pay2Own",
+	}}, quietLog, Options{})
+	if rec := do(t, h, http.MethodGet, "/api/devices/"+phoneIMEI+"/loan", ""); rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401", rec.Code)
+	}
+	rec := do(t, h, http.MethodGet, "/api/devices/"+phoneIMEI+"/loan", goodToken)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d", rec.Code)
+	}
+	if strings.Contains(rec.Body.String(), "0551234987") {
+		t.Fatalf("response contained the full number: %s", rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), masked) {
+		t.Fatalf("masked number missing: %s", rec.Body.String())
+	}
+}
+
+func TestStartPaymentCount(t *testing.T) {
+	var got int
+	h := NewRouter(&countingFake{got: &got}, quietLog, Options{Charger: &fakeCharger{}})
+	req := httptest.NewRequest(http.MethodPost, "/api/devices/"+phoneIMEI+"/payments", strings.NewReader(`{"installments":3}`))
+	req.Header.Set("Authorization", "Bearer "+goodToken)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusAccepted || got != 3 {
+		t.Fatalf("status %d count %d", rec.Code, got)
+	}
+
+	req = httptest.NewRequest(http.MethodPost, "/api/devices/"+phoneIMEI+"/payments", strings.NewReader(`{"pay_balance":true}`))
+	req.Header.Set("Authorization", "Bearer "+goodToken)
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusAccepted || got != 0 {
+		t.Fatalf("balance status %d count %d", rec.Code, got)
+	}
+}
+
+type countingFake struct {
+	fakeInstallments
+	got *int
+}
+
+func (f *countingFake) StartPayment(ctx context.Context, imei string, count int) (store.PendingPayment, error) {
+	*f.got = count
+	return f.fakeInstallments.StartPayment(ctx, imei, count)
+}
+
+func TestPaymentPollCompletes(t *testing.T) {
+	state := &store.PaymentRecord{Reference: "p2o_test", Status: "pending", Currency: "GHS", AmountMinor: 30000, Sequences: []int{1}}
+	h := NewRouter(fakeInstallments{state: state}, quietLog, Options{Charger: &fakeCharger{}})
+	rec := do(t, h, http.MethodGet, "/api/devices/"+phoneIMEI+"/payments/p2o_test", goodToken)
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"status":"success"`) {
+		t.Fatalf("status %d body %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestPushTokenRejected(t *testing.T) {
+	h := NewRouter(fakeInstallments{}, quietLog, Options{})
+	req := httptest.NewRequest(http.MethodPost, "/api/devices/"+phoneIMEI+"/push-token", strings.NewReader(`{"token":"short"}`))
+	req.Header.Set("Authorization", "Bearer "+goodToken)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", rec.Code)
+	}
+}
+
 func TestWebhookAcceptsSignedSuccess(t *testing.T) {
 	body := `{"event":"charge.success","data":{"reference":"p2o_test"}}`
 	if code := postWebhook(paymentRouter(&fakeCharger{}), "good-sig", body); code != http.StatusOK {
 		t.Fatalf("status = %d, want 200", code)
+	}
+}
+
+func (f fakeInstallments) DeviceRestrictionState(context.Context, string) (string, error) {
+	return f.restrictionState, f.restrictionErr
+}
+
+func (f fakeInstallments) ConfirmRelease(context.Context, string) error {
+	return f.releaseErr
+}
+
+func TestRestrictionState(t *testing.T) {
+	h := NewRouter(fakeInstallments{restrictionState: "active"}, quietLog, Options{})
+	rec := do(t, h, http.MethodGet, "/api/devices/"+phoneIMEI+"/restriction", goodToken)
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"state":"active"`) {
+		t.Fatalf("status %d body %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestReleaseConfirmed(t *testing.T) {
+	h := NewRouter(fakeInstallments{}, quietLog, Options{})
+	rec := do(t, h, http.MethodPost, "/api/devices/"+phoneIMEI+"/release-confirmed", goodToken)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want 204", rec.Code)
+	}
+
+	h = NewRouter(fakeInstallments{releaseErr: store.ErrNotReleasable}, quietLog, Options{})
+	rec = do(t, h, http.MethodPost, "/api/devices/"+phoneIMEI+"/release-confirmed", goodToken)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want 409", rec.Code)
+	}
+
+	rec = do(t, h, http.MethodPost, "/api/devices/"+phoneIMEI+"/release-confirmed", "")
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401", rec.Code)
 	}
 }

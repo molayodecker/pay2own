@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"pay2own.com/backend/internal/httpapi"
+	"pay2own.com/backend/internal/notify"
 	"pay2own.com/backend/internal/paystack"
 	"pay2own.com/backend/internal/store"
 )
@@ -48,16 +49,28 @@ func run(log *slog.Logger) error {
 		return errors.New("PAYSTACK_SECRET_KEY is required")
 	}
 
+	alerts, err := notify.FromEnv(
+		os.Getenv("FIREBASE_SERVICE_ACCOUNT_FILE"),
+		os.Getenv("TWILIO_ACCOUNT_SID"),
+		os.Getenv("TWILIO_AUTH_TOKEN"),
+		os.Getenv("TWILIO_MESSAGING_SERVICE_SID"),
+		notify.TwilioFromNumber(os.Getenv("TWILIO_PHONE_NUMBER"), os.Getenv("TWILIO_FROM_NUMBER")),
+	)
+	if err != nil {
+		return err
+	}
+
 	handler := httpapi.NewRouter(store.New(db), log, httpapi.Options{
 		Charger: paystack.New(key),
+		Notify:  alerts,
 	})
 
 	srv := &http.Server{
 		Addr:              addr,
 		Handler:           handler,
 		ReadHeaderTimeout: 5 * time.Second,
-		ReadTimeout:       10 * time.Second,
-		WriteTimeout:      10 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      30 * time.Second,
 		IdleTimeout:       60 * time.Second,
 	}
 
