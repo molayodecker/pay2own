@@ -221,3 +221,24 @@ func (f *fakeShop) DeviceForAdmin(context.Context, string) (store.AdminDevice, e
 	}
 	return f.device, nil
 }
+
+func TestAdminLoginThrottlesRepeatedFailures(t *testing.T) {
+	h := New(&fakeShop{}, "shop-secret", []byte("0123456789abcdef"), Provision{}, nil)
+	for i := 0; i < 5; i++ {
+		res := post(t, h, "/admin/login", "", url.Values{"password": {"wrong"}})
+		if res.Code != http.StatusUnauthorized { t.Fatalf("attempt %d: %d", i, res.Code) }
+	}
+	blocked := post(t, h, "/admin/login", "", url.Values{"password": {"shop-secret"}})
+	if blocked.Code != http.StatusTooManyRequests || blocked.Header().Get("Retry-After") == "" {
+		t.Fatalf("expected throttled sign-in, got %d", blocked.Code)
+	}
+}
+
+func TestAdminCookieRequiresHTTPS(t *testing.T) {
+	h := New(&fakeShop{}, "shop-secret", []byte("0123456789abcdef"), Provision{}, nil)
+	resp := post(t, h, "/admin/login", "", url.Values{"password": {"shop-secret"}})
+	if resp.Code != http.StatusSeeOther { t.Fatalf("login: %d", resp.Code) }
+	if len(resp.Result().Cookies()) == 0 || !resp.Result().Cookies()[0].Secure {
+		t.Fatal("session cookie must be Secure behind Fly TLS termination")
+	}
+}
