@@ -350,7 +350,7 @@ func Schedule(owedMinor int64, weeks int) []int64 {
 
 // CreateSale records a customer, device, loan and its installments in one transaction.
 func (s *Store) CreateSale(ctx context.Context, sale Sale) (loanID int64, err error) {
-	if sale.Weeks < 1 || sale.DepositMinor < 0 || sale.DepositMinor >= sale.PriceMinor {
+	if sale.Weeks < 1 || sale.Weeks > 104 || sale.DepositMinor < 0 || sale.DepositMinor >= sale.PriceMinor {
 		return 0, errors.New("invalid sale: check price, deposit and weeks")
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
