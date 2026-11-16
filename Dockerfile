@@ -4,8 +4,8 @@ COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
 RUN CGO_ENABLED=0 go build -o /out/api ./cmd/api
-# The APK is a separately built Android artifact and may not exist in this repo.
-RUN mkdir -p /out/apk && if [ -f deploy/pay2own.apk ]; then cp deploy/pay2own.apk /out/apk/pay2own.apk; fi
+# Phones download this during setup. A missing file becomes "Couldn't download the admin app".
+COPY deploy/pay2own.apk /out/apk/pay2own.apk
 RUN GOTOOLCHAIN=auto GOBIN=/out go install github.com/pressly/goose/v3/cmd/goose@v3.30.1
 
 FROM debian:bookworm-slim
