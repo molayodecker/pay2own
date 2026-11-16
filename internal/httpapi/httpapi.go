@@ -39,7 +39,7 @@ type paymentContacts interface {
 
 // Charger is the part of the Paystack client the API needs.
 type Charger interface {
-	Charge(ctx context.Context, req paystack.ChargeRequest) (string, error)
+	Charge(ctx context.Context, req paystack.ChargeRequest) (paystack.ChargeResponse, error)
 	Verify(ctx context.Context, reference string) (paystack.Verification, error)
 	ValidSignature(body []byte, signature string) bool
 }
@@ -197,7 +197,7 @@ func startPaymentHandler(inst Installments, ch Charger, log *slog.Logger) http.H
 
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusAccepted)
-		json.NewEncoder(w).Encode(map[string]string{"reference": p.Reference, "status": status})
+		json.NewEncoder(w).Encode(map[string]string{"reference": p.Reference, "status": status.Status, "display_text": status.DisplayText})
 	}
 }
 
