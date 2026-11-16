@@ -1,0 +1,132 @@
+{{define "sale"}}
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>New sale · Pay2Own shop</title>
+  {{template "style" .}}
+</head>
+<body>
+  <div class="app">
+    {{template "bar" .}}
+    <div class="canvas">
+      <h1>New sale</h1>
+      <p class="lede">The phone is restricted as soon as the sale is saved.</p>
+      {{if .Error}}<p class="error">{{.Error}}</p>{{end}}
+      <div class="layout">
+        <form class="panel" method="post" action="/admin/sales">
+          <input type="hidden" name="csrf" value="{{.CSRF}}">
+          <h2>Customer</h2>
+          <div class="grid two">
+            <p><label>Name <input name="name" autocomplete="name" value="{{.Form.Name}}" required></label></p>
+            <p><label>MoMo number <input name="phone" inputmode="tel" autocomplete="tel" value="{{.Form.Phone}}" required></label></p>
+          </div>
+          <p><label>Network
+            <select name="network">
+              <option value="mtn" {{if eq .Form.Provider "mtn"}}selected{{end}}>MTN</option>
+              <option value="vod" {{if eq .Form.Provider "vod"}}selected{{end}}>Telecel</option>
+              <option value="atl" {{if eq .Form.Provider "atl"}}selected{{end}}>AirtelTigo</option>
+            </select>
+          </label></p>
+          <h2>Phone</h2>
+          <div class="grid two">
+            <p><label>IMEI <input name="imei" inputmode="numeric" maxlength="15" value="{{.Form.IMEI}}" required></label></p>
+            <p><label>Model <input name="model" value="{{.Form.Model}}" placeholder="Fills in from the IMEI" required></label></p>
+          </div>
+          <h2>Loan</h2>
+          <div class="grid two">
+            <p><label>Price (GHS) <input name="price" inputmode="decimal" value="{{.Form.Price}}" required></label></p>
+            <p><label>Deposit (GHS) <input name="deposit" inputmode="decimal" value="{{.Form.Deposit}}" required></label></p>
+          </div>
+          <p><label>Can pay a month (GHS) <input id="afford" inputmode="decimal" placeholder="Optional"></label></p>
+          <p class="calc" aria-live="polite"></p>
+          <div class="grid two">
+            <p><label>Weeks <input name="weeks" inputmode="numeric" value="{{.Form.Weeks}}" required></label></p>
+            <p><label>First due date <input type="date" name="first-due" value="{{.Form.FirstDue}}" required></label></p>
+          </div>
+          <button type="submit">Create sale and enroll</button>
+        </form>
+        <aside class="panel">
+          <h2>Existing phone</h2>
+          <p class="lede">Look up a phone that is already on a loan.</p>
+          <form method="get" action="/admin/find">
+            <p><label>IMEI <input name="imei" inputmode="numeric" maxlength="15" required></label></p>
+            <button type="submit">Look up</button>
+          </form>
+        </aside>
+      </div>
+    </div>
+  </div>
+  <script>
+    (function () {
+      var form = document.querySelector('form[action="/admin/sales"]');
+      if (!form) return;
+      var imei = form.querySelector('input[name="imei"]');
+      var model = form.querySelector('input[name="model"]');
+      var last = "";
+      var price = form.querySelector('input[name="price"]');
+      var deposit = form.querySelector('input[name="deposit"]');
+      var monthly = form.querySelector("#afford");
+      var weeks = form.querySelector('input[name="weeks"]');
+      var note = form.querySelector(".calc");
+      function pesewas(raw) {
+        raw = String(raw).trim();
+        if (!/^\d+(\.\d{1,2})?$/.test(raw)) return null;
+        return Math.round(Number(raw) * 100);
+      }
+      function cedis(minor) {
+        var whole = Math.floor(minor / 100);
+        var frac = String(minor % 100).padStart(2, "0");
+        return whole + "." + frac;
+      }
+      function quote() {
+        var month = pesewas(monthly.value);
+        if (month == null || month <= 0) {
+          note.textContent = "";
+          return;
+        }
+        var weekly = Math.round(month / 4);
+        if (weekly < 1) {
+          note.textContent = "";
+          return;
+        }
+        var line = "GHS " + cedis(weekly) + " a week";
+        var cost = pesewas(price.value);
+        var down = pesewas(deposit.value);
+        if (cost == null || down == null || cost <= down) {
+          note.textContent = line + ". A month is 4 payments.";
+          return;
+        }
+        var owed = cost - down;
+        var count = Math.ceil(owed / weekly);
+        if (count > 104) {
+          note.textContent = line + " would take more than 104 weeks.";
+          return;
+        }
+        if (count < 1) count = 1;
+        weeks.value = String(count);
+        var each = Math.floor(owed / count);
+        var tail = each + (owed - each * count);
+        line = "GHS " + cedis(each) + " a week for " + count + " weeks";
+        if (tail !== each) line += ". The last week is GHS " + cedis(tail);
+        note.textContent = line + ".";
+      }
+      [price, deposit, monthly].forEach(function (input) { input.addEventListener("input", quote); });
+      imei.addEventListener("input", function () {
+        var digits = imei.value.replace(/\D/g, "").slice(0, 15);
+        if (digits !== imei.value) imei.value = digits;
+        if (digits.length !== 15 || digits === last) return;
+        last = digits;
+        fetch("/admin/model?imei=" + digits, { headers: { "Accept": "application/json" } })
+          .then(function (res) { return res.ok ? res.json() : null; })
+          .then(function (body) {
+            if (body && body.model && imei.value === digits) model.value = body.model;
+          })
+          .catch(function () {});
+      });
+    })();
+  </script>
+</body>
+</html>
+{{end}}

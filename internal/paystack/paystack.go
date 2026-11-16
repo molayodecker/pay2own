@@ -3,9 +3,12 @@ package paystack
 import (
 	"bytes"
 	"context"
+	"crypto/hmac"
+	"crypto/sha512"
+	"encoding/hex"
 	"encoding/json"
-	"log"
 	"fmt"
+	"errors"
 	"net/http"
 	"strconv"
 	"time"
@@ -34,9 +37,23 @@ type ChargeRequest struct {
 	Provider    string // "mtn", "vod" (Telecel) or "atl" (AT)
 }
 
+// ErrChargeRejected means Paystack definitively refused the charge request.
+// Network failures and malformed responses are ambiguous and must be reconciled.
+var ErrChargeRejected = errors.New("paystack definitively rejected charge")
+
+type ChargeResponse struct {
+	Status      string
+	DisplayText string
+}
+
+type Verification struct {
+	Status      string // "success", "failed", "abandoned", ...
+	AmountMinor int64
+	Currency    string
+}
+
 // Charge asks Paystack to send a mobile-money approval prompt to the customer's phone.
-// It returns Paystack's status, e.g. "pay_offline" (waiting for PIN) or "send_otp".
-func (c *Client) Charge(ctx context.Context, req ChargeRequest) (string, error) {
+func (c *Client) Charge(ctx context.Context, req ChargeRequest) (ChargeResponse, error) {
 	body := map[string]any{
 		"reference": req.Reference,
 		"email":     req.Email,
@@ -47,32 +64,24 @@ func (c *Client) Charge(ctx context.Context, req ChargeRequest) (string, error) 
 			"provider": req.Provider,
 		},
 	}
-
-	log.Printf("paystack charge request: %+v", body)
-
 	var out struct {
 		Status  bool   `json:"status"`
 		Message string `json:"message"`
 		Data    struct {
-			Status string `json:"status"`
+			Status          string `json:"status"`
+			Message         string `json:"message"`
+			GatewayResponse string `json:"gateway_response"`
+			DisplayText string `json:"display_text"`
 		} `json:"data"`
 	}
-
 	if err := c.do(ctx, http.MethodPost, "/charge", body, &out); err != nil {
-		return "", err
+		return ChargeResponse{}, err
 	}
-
-
 	if !out.Status {
-		return "", fmt.Errorf("paystack charge refused: %s", out.Message)
+		return ChargeResponse{}, fmt.Errorf("%w: %s (data.status=%s, data.message=%s, gateway=%s)", ErrChargeRejected,
+			out.Message, out.Data.Status, out.Data.Message, out.Data.GatewayResponse)
 	}
-	return out.Data.Status, nil
-}
-
-type Verification struct {
-	Status      string // "success", "failed", "abandoned", ...
-	AmountMinor int64
-	Currency    string
+	return ChargeResponse{Status: out.Data.Status, DisplayText: out.Data.DisplayText}, nil
 }
 
 // Verify asks Paystack what really happened to a payment. Never trust a notification without this.
@@ -118,4 +127,12 @@ func (c *Client) do(ctx context.Context, method, path string, in, out any) error
 		return fmt.Errorf("paystack %s %s: status %d", method, path, resp.StatusCode)
 	}
 	return json.NewDecoder(resp.Body).Decode(out)
+}
+
+// ValidSignature reports whether body was signed by Paystack with this client's secret key.
+func (c *Client) ValidSignature(body []byte, signature string) bool {
+	mac := hmac.New(sha512.New, []byte(c.secretKey))
+	mac.Write(body)
+	want := hex.EncodeToString(mac.Sum(nil))
+	return hmac.Equal([]byte(want), []byte(signature))
 }

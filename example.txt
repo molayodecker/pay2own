@@ -1,0 +1,10 @@
+TOKEN=$(go run ./cmd/pay2own-admin issue-token 000000000000001)
+# Enter this token and the IMEI in the app's setup screen. Do not put it in the app build.
+
+curl -i -X POST -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8080/api/devices/000000000000001/payments
+
+cloudflared tunnel --url http://127.0.0.1:8080
+adb reverse tcp:8080 tcp:8080
+TOKEN=$(grep '^pay2own.deviceToken=' local.properties | cut -d= -f2-)
+echo ${#TOKEN}
+adb shell "input text '$TOKEN'" 

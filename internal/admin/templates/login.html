@@ -1,0 +1,23 @@
+{{define "login"}}
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Sign in · Pay2Own shop</title>
+  {{template "style" .}}
+</head>
+<body class="gate">
+  <main class="panel">
+    <a class="brand" href="/admin/login">Pay2Own <span>Shop</span></a>
+    <h1>Sign in</h1>
+    <p class="lede">Enroll a phone and hand it to the customer.</p>
+    {{if .Error}}<p class="error">{{.Error}}</p>{{end}}
+    <form method="post" action="/admin/login">
+      <p class="field"><label>Password <input type="password" name="password" autocomplete="current-password" required></label></p>
+      <button type="submit">Sign in</button>
+    </form>
+  </main>
+</body>
+</html>
+{{end}}

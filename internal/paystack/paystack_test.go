@@ -2,6 +2,9 @@ package paystack
 
 import (
 	"context"
+	"crypto/hmac"
+	"crypto/sha512"
+	"encoding/hex"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -30,14 +33,14 @@ func TestChargeSendsRightRequest(t *testing.T) {
 		if body["amount"] != "30000" || body["currency"] != "GHS" || body["reference"] != "p2o_test" {
 			t.Errorf("bad body: %v", body)
 		}
-		w.Write([]byte(`{"status":true,"message":"Charge attempted","data":{"status":"pay_offline"}}`))
+		w.Write([]byte(`{"status":true,"message":"Charge attempted","data":{"status":"pay_offline","display_text":"Approve on your phone"}}`))
 	})
 
 	status, err := c.Charge(context.Background(), ChargeRequest{
 		Reference: "p2o_test", Email: "customer@example.com",
 		AmountMinor: 30000, Currency: "GHS", Phone: "0551234987", Provider: "mtn",
 	})
-	if err != nil || status != "pay_offline" {
+	if err != nil || status.Status != "pay_offline" || status.DisplayText != "Approve on your phone" {
 		t.Fatalf("got %q, %v", status, err)
 	}
 }
@@ -71,5 +74,20 @@ func TestServerErrorIsAnError(t *testing.T) {
 	})
 	if _, err := c.Verify(context.Background(), "p2o_test"); err == nil {
 		t.Fatal("expected error")
+	}
+}
+
+func TestValidSignature(t *testing.T) {
+	c := New("sk_test_fake")
+	body := []byte(`{"event":"charge.success"}`)
+	mac := hmac.New(sha512.New, []byte("sk_test_fake"))
+	mac.Write(body)
+	good := hex.EncodeToString(mac.Sum(nil))
+
+	if !c.ValidSignature(body, good) {
+		t.Fatal("good signature rejected")
+	}
+	if c.ValidSignature(body, "bad") || c.ValidSignature([]byte(`{"event":"tampered"}`), good) {
+		t.Fatal("bad signature accepted")
 	}
 }

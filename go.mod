@@ -2,7 +2,10 @@ module pay2own.com/backend
 
 go 1.25.6
 
-require github.com/jackc/pgx/v5 v5.12.0
+require (
+	github.com/jackc/pgx/v5 v5.12.0
+	github.com/skip2/go-qrcode v0.0.0-20200617195104-da1b6568686e
+)
 
 require (
 	github.com/jackc/pgpassfile v1.0.0 // indirect

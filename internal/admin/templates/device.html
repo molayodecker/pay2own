@@ -1,0 +1,51 @@
+{{define "device"}}
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{.Device.IMEI}} · Pay2Own shop</title>
+  {{template "style" .}}
+</head>
+<body>
+  <div class="app">
+    {{template "bar" .}}
+    <div class="canvas">
+      <h1>{{.Device.Model}}</h1>
+      <p class="lede">{{.Device.CustomerName}}</p>
+      {{if .Error}}<p class="error">{{.Error}}</p>{{end}}
+      <section class="panel">
+        <p>
+          {{if eq .Device.RestrictionState "active"}}<span class="pill on">Restrictions on</span>
+          {{else if eq .Device.RestrictionState "release_pending"}}<span class="pill wait">Finishing unlock</span>
+          {{else if eq .Device.RestrictionState "released"}}<span class="pill off">Released</span>
+          {{else}}<span class="pill">Not enrolled</span>{{end}}
+        </p>
+        <dl class="facts">
+          <dt>Customer</dt><dd>{{.Device.CustomerName}}</dd>
+          <dt>MoMo</dt><dd>{{.Device.Phone}} · {{if eq .Device.Provider "mtn"}}MTN{{else if eq .Device.Provider "vod"}}Telecel{{else if eq .Device.Provider "atl"}}AirtelTigo{{else}}{{.Device.Provider}}{{end}}</dd>
+          <dt>IMEI</dt><dd>{{.Device.IMEI}}</dd>
+          <dt>Loan</dt><dd>{{.Device.LoanID}}</dd>
+          <dt>Price</dt><dd>GHS {{.Price}}</dd>
+          <dt>Deposit</dt><dd>GHS {{.Deposit}}</dd>
+          <dt>Restrictions</dt><dd>{{.Device.RestrictionState}}</dd>
+        </dl>
+        <div class="actions">
+          <form method="post" action="/admin/devices/{{.Device.IMEI}}/token">
+            <input type="hidden" name="csrf" value="{{.CSRF}}">
+            <button type="submit">Issue a new token</button>
+          </form>
+          {{if eq .Device.RestrictionState "not_enrolled"}}
+          <form method="post" action="/admin/devices/{{.Device.IMEI}}/activate">
+            <input type="hidden" name="csrf" value="{{.CSRF}}">
+            <button type="submit">Turn restrictions on</button>
+          </form>
+          {{end}}
+        </div>
+        <p class="lede">A new token is shown once. The previous token stops working.</p>
+      </section>
+    </div>
+  </div>
+</body>
+</html>
+{{end}}
