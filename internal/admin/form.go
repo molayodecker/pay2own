@@ -62,16 +62,31 @@ func (f saleForm) sale() (store.Sale, string) {
 	}, ""
 }
 
+// ghsToMinor parses cedis exactly, without floating-point rounding or overflow.
 func ghsToMinor(raw string) (int64, error) {
 	raw = strings.TrimSpace(raw)
-	if raw == "" {
-		return 0, nil
+	if raw == "" { return 0, nil }
+	parts := strings.Split(raw, ".")
+	if len(parts) > 2 || len(parts[0]) == 0 || (len(parts) == 2 && (len(parts[1]) == 0 || len(parts[1]) > 2)) {
+		return 0, strconv.ErrSyntax
 	}
-	value, err := strconv.ParseFloat(raw, 64)
-	if err != nil {
-		return 0, err
+	for _, part := range parts {
+		for _, digit := range part {
+			if digit < '0' || digit > '9' { return 0, strconv.ErrSyntax }
+		}
 	}
-	return int64(math.Round(value * 100)), nil
+	whole, err := strconv.ParseInt(parts[0], 10, 64)
+	if err != nil { return 0, err }
+	if whole > math.MaxInt64/100 { return 0, strconv.ErrRange }
+	minor := whole * 100
+	if len(parts) == 2 {
+		fraction := parts[1]
+		if len(fraction) == 1 { fraction += "0" }
+		cents, _ := strconv.ParseInt(fraction, 10, 64)
+		if minor > math.MaxInt64-cents { return 0, strconv.ErrRange }
+		minor += cents
+	}
+	return minor, nil
 }
 
 func enrollURL(imei, token string) string {
