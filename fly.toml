@@ -5,7 +5,7 @@ primary_region = "iad"
 
 [env]
   ADDR = "0.0.0.0:8080"
-  APK_PATH = "/pay2own.apk"
+  APK_PATH = "/apk/pay2own.apk"
 
 [http_service]
   internal_port = 8080
