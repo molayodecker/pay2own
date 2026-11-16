@@ -249,7 +249,7 @@ func TestCediParserRejectsImpreciseOrOverflowAmounts(t *testing.T) {
 		got, err := ghsToMinor(raw)
 		if err != nil || got != want { t.Fatalf("%q: got %d err %v want %d", raw, got, err, want) }
 	}
-	for _, raw := range []string{"-1", "NaN", "Inf", "1.234", "1.", ".50", "92233720368547758", "99999999999999999999"} {
+	for _, raw := range []string{"-1", "NaN", "Inf", "1.234", "1.", ".50", "92233720368547759", "99999999999999999999"} {
 		if got, err := ghsToMinor(raw); err == nil {
 			t.Errorf("%q unexpectedly accepted as %d", raw, got)
 		}
