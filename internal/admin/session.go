@@ -45,7 +45,9 @@ func (h *Handler) startSession(w http.ResponseWriter, r *http.Request) (string, 
 		Expires:  time.Unix(exp, 0),
 		HttpOnly: true,
 		SameSite: http.SameSiteLaxMode,
-		Secure:   r.TLS != nil,
+		// Fly terminates TLS before forwarding to the Go server. Always
+		// require HTTPS in the browser even when the upstream request is HTTP.
+		Secure:   true,
 	})
 	return csrf, nil
 }
@@ -58,6 +60,7 @@ func (h *Handler) clearSession(w http.ResponseWriter) {
 		MaxAge:   -1,
 		HttpOnly: true,
 		SameSite: http.SameSiteLaxMode,
+		Secure:   true,
 	})
 }
 
