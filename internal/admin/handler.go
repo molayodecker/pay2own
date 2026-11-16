@@ -7,6 +7,8 @@ import (
 	"encoding/json"
 	"html/template"
 	"io"
+	"net"
+	"sync"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -36,6 +38,8 @@ type Handler struct {
 	log       *slog.Logger
 	tmpl      *template.Template
 	mux       *http.ServeMux
+	loginMu   sync.Mutex
+	failures  map[string]loginFailures
 }
 
 func New(shop Shop, password string, secret []byte, provision Provision, log *slog.Logger) http.Handler {
@@ -113,15 +117,61 @@ func (h *Handler) loginForm(w http.ResponseWriter, r *http.Request) {
 	h.render(w, http.StatusOK, "login", loginView{})
 }
 
+// loginFailures bounds repeated guesses of the shared shop password.
+type loginFailures struct {
+	count int
+	until time.Time
+}
+
+func (h *Handler) loginKey(r *http.Request) string {
+	// Do not trust caller-controlled forwarding headers for rate-limit identity.
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil { return r.RemoteAddr }
+	return host
+}
+
+func (h *Handler) blockedLogin(key string) bool {
+	h.loginMu.Lock()
+	defer h.loginMu.Unlock()
+	v := h.failures[key]
+	if time.Now().After(v.until) {
+		delete(h.failures, key)
+		return false
+	}
+	return v.count >= 5
+}
+
+func (h *Handler) recordLogin(key string, success bool) {
+	h.loginMu.Lock()
+	defer h.loginMu.Unlock()
+	if success {
+		delete(h.failures, key)
+		return
+	}
+	if h.failures == nil { h.failures = make(map[string]loginFailures) }
+	v := h.failures[key]
+	if time.Now().After(v.until) { v = loginFailures{until: time.Now().Add(15 * time.Minute)} }
+	v.count++
+	h.failures[key] = v
+}
+
 func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 	if !h.configured() {
 		http.Error(w, "Shop admin is not configured. Set ADMIN_PASSWORD and ADMIN_SESSION_SECRET.", http.StatusServiceUnavailable)
 		return
 	}
+	key := h.loginKey(r)
+	if h.blockedLogin(key) {
+		w.Header().Set("Retry-After", "900")
+		http.Error(w, "Too many sign-in attempts. Try again later.", http.StatusTooManyRequests)
+		return
+	}
 	if !sameSecret(r.FormValue("password"), h.password) {
+		h.recordLogin(key, false)
 		h.render(w, http.StatusUnauthorized, "login", loginView{Error: "Wrong password."})
 		return
 	}
+	h.recordLogin(key, true)
 	if _, err := h.startSession(w, r); err != nil {
 		http.Error(w, "Could not start the session.", http.StatusInternalServerError)
 		return
