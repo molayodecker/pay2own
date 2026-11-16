@@ -242,3 +242,16 @@ func TestAdminCookieRequiresHTTPS(t *testing.T) {
 		t.Fatal("session cookie must be Secure behind Fly TLS termination")
 	}
 }
+
+func TestCediParserRejectsImpreciseOrOverflowAmounts(t *testing.T) {
+	cases := map[string]int64{"0": 0, "0.01": 1, "1.2": 120, "12.34": 1234, "999999.99": 99999999}
+	for raw, want := range cases {
+		got, err := ghsToMinor(raw)
+		if err != nil || got != want { t.Fatalf("%q: got %d err %v want %d", raw, got, err, want) }
+	}
+	for _, raw := range []string{"-1", "NaN", "Inf", "1.234", "1.", ".50", "92233720368547758", "99999999999999999999"} {
+		if got, err := ghsToMinor(raw); err == nil {
+			t.Errorf("%q unexpectedly accepted as %d", raw, got)
+		}
+	}
+}
