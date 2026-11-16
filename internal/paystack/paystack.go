@@ -41,6 +41,11 @@ type ChargeRequest struct {
 // Network failures and malformed responses are ambiguous and must be reconciled.
 var ErrChargeRejected = errors.New("paystack definitively rejected charge")
 
+type ChargeResponse struct {
+	Status      string
+	DisplayText string
+}
+
 type Verification struct {
 	Status      string // "success", "failed", "abandoned", ...
 	AmountMinor int64
@@ -48,7 +53,7 @@ type Verification struct {
 }
 
 // Charge asks Paystack to send a mobile-money approval prompt to the customer's phone.
-func (c *Client) Charge(ctx context.Context, req ChargeRequest) (string, error) {
+func (c *Client) Charge(ctx context.Context, req ChargeRequest) (ChargeResponse, error) {
 	body := map[string]any{
 		"reference": req.Reference,
 		"email":     req.Email,
@@ -66,16 +71,17 @@ func (c *Client) Charge(ctx context.Context, req ChargeRequest) (string, error) 
 			Status          string `json:"status"`
 			Message         string `json:"message"`
 			GatewayResponse string `json:"gateway_response"`
+			DisplayText string `json:"display_text"`
 		} `json:"data"`
 	}
 	if err := c.do(ctx, http.MethodPost, "/charge", body, &out); err != nil {
-		return "", err
+		return ChargeResponse{}, err
 	}
 	if !out.Status {
-		return "", fmt.Errorf("%w: %s (data.status=%s, data.message=%s, gateway=%s)", ErrChargeRejected,
+		return ChargeResponse{}, fmt.Errorf("%w: %s (data.status=%s, data.message=%s, gateway=%s)", ErrChargeRejected,
 			out.Message, out.Data.Status, out.Data.Message, out.Data.GatewayResponse)
 	}
-	return out.Data.Status, nil
+	return ChargeResponse{Status: out.Data.Status, DisplayText: out.Data.DisplayText}, nil
 }
 
 // Verify asks Paystack what really happened to a payment. Never trust a notification without this.
