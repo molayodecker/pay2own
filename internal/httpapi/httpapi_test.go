@@ -209,9 +209,9 @@ type fakeCharger struct {
 	got paystack.ChargeRequest
 }
 
-func (c *fakeCharger) Charge(_ context.Context, req paystack.ChargeRequest) (string, error) {
+func (c *fakeCharger) Charge(_ context.Context, req paystack.ChargeRequest) (paystack.ChargeResponse, error) {
 	c.got = req
-	return "pay_offline", c.err
+	return paystack.ChargeResponse{Status: "pay_offline", DisplayText: "Authorize payment on your phone"}, c.err
 }
 
 func (c *fakeCharger) Verify(context.Context, string) (paystack.Verification, error) {
@@ -239,6 +239,7 @@ func TestStartPaymentOK(t *testing.T) {
 	if rec.Code != http.StatusAccepted {
 		t.Fatalf("status = %d, want 202", rec.Code)
 	}
+	if !strings.Contains(rec.Body.String(), "Authorize payment on your phone") { t.Fatalf("missing Paystack instructions: %s", rec.Body.String()) }
 	if ch.got.Email != "customer-1@pay2own.com" || ch.got.AmountMinor != 30000 || ch.got.Provider != "mtn" {
 		t.Fatalf("bad charge request: %+v", ch.got)
 	}
