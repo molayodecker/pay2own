@@ -53,6 +53,22 @@
     border: 1px solid transparent; border-radius: 12px;
   }
   input:focus, select:focus { outline: 2px solid var(--ink); background: #fff; }
+  input.invalid, select.invalid {
+    outline: 2px solid var(--danger);
+    outline-offset: 3px;
+    background: #fff;
+    box-shadow: 0 0 0 6px rgba(138, 49, 38, 0.16);
+  }
+  input.invalid:focus, select.invalid:focus { outline: 2px solid var(--danger); }
+  .toast {
+    position: fixed; z-index: 20; left: 50%; bottom: 1.25rem;
+    transform: translateX(-50%); margin: 0;
+    max-width: min(28rem, calc(100% - 2rem));
+    padding: 0.75rem 1.05rem; border-radius: 999px;
+    background: var(--danger); color: #fff; font-weight: 650;
+    box-shadow: 0 10px 30px rgba(20, 19, 17, 0.18);
+  }
+  .toast[hidden] { display: none; }
   .grid { display: grid; gap: 0.9rem; }
   button, .button {
     display: inline-flex; align-items: center; justify-content: center;

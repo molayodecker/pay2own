@@ -15,7 +15,7 @@
       <p class="lede">The phone is restricted as soon as the sale is saved.</p>
       {{if .Error}}<p class="error">{{.Error}}</p>{{end}}
       <div class="layout">
-        <form class="panel" method="post" action="/admin/sales">
+        <form class="panel" method="post" action="/admin/sales" novalidate>
           <input type="hidden" name="csrf" value="{{.CSRF}}">
           <h2>Customer</h2>
           <div class="grid two">
@@ -50,7 +50,7 @@
         <aside class="panel">
           <h2>Existing phone</h2>
           <p class="lede">Look up a phone that is already on a loan.</p>
-          <form method="get" action="/admin/find">
+          <form method="get" action="/admin/find" novalidate>
             <p><label>IMEI <input name="imei" inputmode="numeric" maxlength="15" required></label></p>
             <button type="submit">Look up</button>
           </form>
@@ -60,6 +60,57 @@
   </div>
   <script>
     (function () {
+      function fieldName(input) {
+        var label = input.closest("label");
+        if (!label) return "this field";
+        var text = "";
+        label.childNodes.forEach(function (node) {
+          if (node.nodeType === 3) text += node.textContent;
+        });
+        text = text.replace(/\s+/g, " ").trim();
+        return text || "this field";
+      }
+      function blank(input) {
+        return String(input.value || "").trim() === "";
+      }
+      var toastTimer;
+      function showToast(message) {
+        var toast = document.querySelector(".toast");
+        if (!toast) {
+          toast = document.createElement("p");
+          toast.className = "toast";
+          toast.setAttribute("role", "status");
+          document.body.appendChild(toast);
+        }
+        toast.textContent = message;
+        toast.hidden = false;
+        clearTimeout(toastTimer);
+        toastTimer = setTimeout(function () { toast.hidden = true; }, 3200);
+      }
+      function guard(target) {
+        target.addEventListener("submit", function (event) {
+          var missing = Array.prototype.filter.call(target.querySelectorAll("[required]"), blank);
+          target.querySelectorAll(".invalid").forEach(function (el) {
+            el.classList.remove("invalid");
+            el.removeAttribute("aria-invalid");
+          });
+          if (!missing.length) return;
+          event.preventDefault();
+          missing.forEach(function (el) {
+            el.classList.add("invalid");
+            el.setAttribute("aria-invalid", "true");
+          });
+          missing[0].focus();
+          showToast("Fill in " + fieldName(missing[0]) + ".");
+        });
+        target.addEventListener("input", function (event) {
+          var input = event.target;
+          if (!input.classList || !input.classList.contains("invalid") || blank(input)) return;
+          input.classList.remove("invalid");
+          input.removeAttribute("aria-invalid");
+        });
+      }
+      document.querySelectorAll("form").forEach(guard);
       var form = document.querySelector('form[action="/admin/sales"]');
       if (!form) return;
       var imei = form.querySelector('input[name="imei"]');
@@ -93,14 +144,20 @@
         }
         var line = "GHS " + cedis(weekly) + " a week";
         var cost = pesewas(price.value);
-        var down = pesewas(deposit.value);
-        if (cost == null || down == null || cost <= down) {
+        var down = deposit.value.trim() === "" ? 0 : pesewas(deposit.value);
+        if (cost == null || down == null) {
+          note.textContent = line + ". A month is 4 payments.";
+          return;
+        }
+        if (cost <= down) {
+          weeks.value = "";
           note.textContent = line + ". A month is 4 payments.";
           return;
         }
         var owed = cost - down;
         var count = Math.ceil(owed / weekly);
         if (count > 104) {
+          weeks.value = "";
           note.textContent = line + " would take more than 104 weeks.";
           return;
         }
