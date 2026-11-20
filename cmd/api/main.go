@@ -1,6 +1,7 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"log/slog"
@@ -71,10 +72,7 @@ func run(log *slog.Logger) error {
 		BaseURL: mithril.APIBase(appEnv, os.Getenv("MITHRIL_API_URL")),
 		Token:   mithril.IntakeToken(appEnv, os.Getenv("PAY2OWN_INTAKE_TOKEN")),
 	}
-	supportPhone := os.Getenv("PAY2OWN_SUPPORT_PHONE")
-	if supportPhone == "" {
-		supportPhone = "+233544415766"
-	}
+	supportPhone := cmp.Or(os.Getenv("PAY2OWN_SUPPORT_PHONE"), "+233544415766")
 	log.Info("mithril lookup", "base", lookup.BaseURL)
 	apiHandler := httpapi.NewRouter(st, log, httpapi.Options{
 		Charger: paystack.New(key),
