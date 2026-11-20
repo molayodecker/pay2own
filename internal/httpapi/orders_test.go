@@ -77,6 +77,26 @@ func (m *memoryMessenger) DeliverText(_ context.Context, phone, text string, _ m
 	return "whatsapp", nil
 }
 
+type recordingOrders struct {
+	memoryOrders
+	recordErr error
+}
+
+func (r *recordingOrders) SetOrderChannels(ctx context.Context, reference, workerChannel, supportChannel string) error {
+	r.recordErr = ctx.Err()
+	return r.memoryOrders.SetOrderChannels(ctx, reference, workerChannel, supportChannel)
+}
+
+type stalledMessenger struct {
+	calls int
+}
+
+func (m *stalledMessenger) DeliverText(ctx context.Context, _, _ string, _ map[string]string) (string, error) {
+	m.calls++
+	<-ctx.Done()
+	return "failed", nil
+}
+
 func TestOrderSlipChecksMithrilThenStoresLocally(t *testing.T) {
 	orders := &memoryOrders{}
 	lookup := &lookupResult{account: true}
@@ -109,6 +129,38 @@ func TestOrderSlipChecksMithrilThenStoresLocally(t *testing.T) {
 	}
 	if len(messages.sent) != 2 {
 		t.Fatalf("messages %#v", messages.sent)
+	}
+}
+
+func TestOrderRecordsChannelsWhenDeliveryContextIsDone(t *testing.T) {
+	orders := &recordingOrders{}
+	messages := &stalledMessenger{}
+	handler := OrderService{
+		Store:        orders,
+		Notify:       messages,
+		Token:        "pay2own-local-dev",
+		SupportPhone: "+233544415766",
+	}.create(slog.New(slog.NewTextHandler(io.Discard, nil)))
+
+	body := `{"name":"Ama Mensah","phone":"0241234567","workerId":"IC-12","catalogPhoneId":"row_testphone000001","phoneModel":"Samsung Galaxy A06","visit":"As soon as possible"}`
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	req := httptest.NewRequest(http.MethodPost, "/api/orders", strings.NewReader(body)).WithContext(ctx)
+	req.Header.Set("x-pay2own-token", "pay2own-local-dev")
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status %d body %s", rec.Code, rec.Body.String())
+	}
+	if messages.calls != 2 {
+		t.Fatalf("calls %d", messages.calls)
+	}
+	if orders.recordErr != nil {
+		t.Fatalf("record context %v", orders.recordErr)
+	}
+	if orders.saved[0].WorkerChannel != "failed" || orders.saved[0].SupportChannel != "failed" {
+		t.Fatalf("channels %#v", orders.saved[0])
 	}
 }
 

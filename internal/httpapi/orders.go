@@ -9,7 +9,16 @@ import (
 	"strings"
 	"time"
 
+	"pay2own.com/backend/internal/notify"
 	"pay2own.com/backend/internal/store"
+)
+
+const (
+	orderLookupTimeout = 5 * time.Second
+	orderInsertTimeout = 5 * time.Second
+	orderRecordTimeout = 3 * time.Second
+	// Worker and support each try WhatsApp, then SMS.
+	orderDeliveries = 4
 )
 
 // OrderBook is the Pay2Own database. Mithril is not this store.
@@ -75,11 +84,13 @@ func (s OrderService) create(log *slog.Logger) http.HandlerFunc {
 			return
 		}
 
-		ctx, cancel := context.WithTimeout(r.Context(), 8*time.Second)
+		ctx, cancel := context.WithTimeout(r.Context(), orderLookupTimeout+orderInsertTimeout+orderDeliveries*notify.DeliveryAttemptTimeout)
 		defer cancel()
 
 		if s.Lookup != nil {
-			account, err := s.Lookup.HasAccount(ctx, order.Phone, order.WorkerID)
+			lookupCtx, lookupCancel := context.WithTimeout(ctx, orderLookupTimeout)
+			account, err := s.Lookup.HasAccount(lookupCtx, order.Phone, order.WorkerID)
+			lookupCancel()
 			if err != nil {
 				log.Warn("mithril worker lookup failed", "err", err)
 			} else {
@@ -87,7 +98,9 @@ func (s OrderService) create(log *slog.Logger) http.HandlerFunc {
 			}
 		}
 
-		saved, err := s.Store.InsertOrder(ctx, order)
+		insertCtx, insertCancel := context.WithTimeout(ctx, orderInsertTimeout)
+		saved, err := s.Store.InsertOrder(insertCtx, order)
+		insertCancel()
 		if err == store.ErrOutOfStock {
 			writeJSON(w, log, http.StatusUnprocessableEntity, map[string]string{"error": "That phone is out of stock. Choose another phone."})
 			return
@@ -99,7 +112,11 @@ func (s OrderService) create(log *slog.Logger) http.HandlerFunc {
 		}
 
 		workerChannel, supportChannel := s.notify(ctx, saved)
-		if err := s.Store.SetOrderChannels(ctx, saved.Reference, workerChannel, supportChannel); err != nil {
+		// Delivery attempts can use the whole order budget. Recording still
+		// gets its own deadline after the reservation is committed.
+		recordCtx, recordCancel := context.WithTimeout(context.WithoutCancel(ctx), orderRecordTimeout)
+		defer recordCancel()
+		if err := s.Store.SetOrderChannels(recordCtx, saved.Reference, workerChannel, supportChannel); err != nil {
 			log.Error("order channel update failed", "err", err)
 		}
 		saved.WorkerChannel = workerChannel

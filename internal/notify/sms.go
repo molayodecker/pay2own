@@ -22,7 +22,13 @@ type SMS struct {
 	ContentSID       string
 	messagesURL      string
 	client           *http.Client
+	attemptTimeout   time.Duration
 }
+
+// DeliveryAttemptTimeout bounds one WhatsApp or SMS request.
+// It is shorter than the Twilio client's ten-second timeout, so a stall
+// ends and the fallback still has a live context.
+const DeliveryAttemptTimeout = 8 * time.Second
 
 // NewTwilio returns nil when the account, token, or sender is missing, which turns SMS off.
 func NewTwilio(accountSID, authToken, messagingServiceSID, fromNumber string) *SMS {
@@ -35,6 +41,7 @@ func NewTwilio(accountSID, authToken, messagingServiceSID, fromNumber string) *S
 		messagingService: messagingServiceSID,
 		from:             fromNumber,
 		client:           &http.Client{Timeout: 10 * time.Second},
+		attemptTimeout:   DeliveryAttemptTimeout,
 	}
 }
 
@@ -88,19 +95,37 @@ func (s *SMS) DeliverText(ctx context.Context, phone, text string, vars map[stri
 	if s == nil {
 		return "failed", nil
 	}
-	if s != nil && s.ContentSID != "" {
-		if err := s.sendWhatsApp(ctx, phone, "", vars); err == nil {
+	if s.ContentSID != "" {
+		if s.attempt(ctx, func(ctx context.Context) error {
+			return s.sendWhatsApp(ctx, phone, "", vars)
+		}) {
 			return "whatsapp", nil
 		}
-	} else if s != nil && s.WhatsAppFrom != "" {
-		if err := s.sendWhatsApp(ctx, phone, text, nil); err == nil {
+	} else if s.WhatsAppFrom != "" {
+		if s.attempt(ctx, func(ctx context.Context) error {
+			return s.sendWhatsApp(ctx, phone, text, nil)
+		}) {
 			return "whatsapp", nil
 		}
 	}
-	if err := s.SendSMS(ctx, phone, text); err == nil {
+	if s.attempt(ctx, func(ctx context.Context) error {
+		return s.SendSMS(ctx, phone, text)
+	}) {
 		return "sms", nil
 	}
 	return "failed", nil
+}
+
+// attempt gives one send its own deadline. The parent context stays open
+// for the next attempt when this one stalls.
+func (s *SMS) attempt(parent context.Context, send func(context.Context) error) bool {
+	timeout := s.attemptTimeout
+	if timeout <= 0 {
+		timeout = DeliveryAttemptTimeout
+	}
+	ctx, cancel := context.WithTimeout(parent, timeout)
+	defer cancel()
+	return send(ctx) == nil
 }
 
 func (s *SMS) sendWhatsApp(ctx context.Context, phone, text string, vars map[string]string) error {
