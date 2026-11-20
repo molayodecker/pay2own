@@ -13,6 +13,7 @@ import (
 
 	"pay2own.com/backend/internal/admin"
 	"pay2own.com/backend/internal/httpapi"
+	"pay2own.com/backend/internal/mithril"
 	"pay2own.com/backend/internal/notify"
 	"pay2own.com/backend/internal/paystack"
 	"pay2own.com/backend/internal/store"
@@ -57,15 +58,38 @@ func run(log *slog.Logger) error {
 		os.Getenv("TWILIO_AUTH_TOKEN"),
 		os.Getenv("TWILIO_MESSAGING_SERVICE_SID"),
 		notify.TwilioFromNumber(os.Getenv("TWILIO_PHONE_NUMBER"), os.Getenv("TWILIO_FROM_NUMBER")),
+		os.Getenv("TWILIO_WHATSAPP_FROM"),
+		os.Getenv("TWILIO_TEMPLATE_PAY2OWN_ORDER"),
 	)
 	if err != nil {
 		return err
 	}
 
 	st := store.New(db)
+	appEnv := os.Getenv("APP_ENV")
+	lookup := mithril.Client{
+		BaseURL: mithril.APIBase(appEnv, os.Getenv("MITHRIL_API_URL")),
+		Token:   mithril.IntakeToken(appEnv, os.Getenv("PAY2OWN_INTAKE_TOKEN")),
+	}
+	supportPhone := os.Getenv("PAY2OWN_SUPPORT_PHONE")
+	if supportPhone == "" {
+		supportPhone = "+233544415766"
+	}
+	log.Info("mithril lookup", "base", lookup.BaseURL)
 	apiHandler := httpapi.NewRouter(st, log, httpapi.Options{
 		Charger: paystack.New(key),
 		Notify:  alerts,
+		Orders: httpapi.OrderService{
+			Store:        st,
+			Lookup:       lookup,
+			Notify:       messenger(alerts),
+			Token:        lookup.Token,
+			SupportPhone: supportPhone,
+		},
+		Catalog: httpapi.CatalogService{
+			Store: st,
+			Token: lookup.Token,
+		},
 	})
 	shop := admin.New(st, os.Getenv("ADMIN_PASSWORD"), []byte(os.Getenv("ADMIN_SESSION_SECRET")), admin.Provision{
 		APKURL:            os.Getenv("PROVISIONING_APK_URL"),
@@ -112,6 +136,14 @@ func run(log *slog.Logger) error {
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	return srv.Shutdown(shutdownCtx)
+}
+
+func messenger(alerts notify.Sender) httpapi.OrderMessenger {
+	hub, ok := alerts.(notify.Hub)
+	if !ok {
+		return nil
+	}
+	return hub
 }
 
 func serveAPK(w http.ResponseWriter, r *http.Request) {
