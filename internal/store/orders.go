@@ -35,6 +35,18 @@ func (s *Store) InsertOrder(ctx context.Context, order OrderSlip) (OrderSlip, er
 		if err != nil {
 			return OrderSlip{}, err
 		}
+		// Lock the catalog parent before any unit, matching SaveCatalog.
+		// This prevents catalog edits and concurrent reservations deadlocking.
+		var lockedID string
+		err = tx.QueryRowContext(ctx, `SELECT id FROM catalog_phones WHERE id = $1 FOR UPDATE`, order.CatalogPhoneID).Scan(&lockedID)
+		if errors.Is(err, sql.ErrNoRows) {
+			tx.Rollback()
+			return OrderSlip{}, ErrOutOfStock
+		}
+		if err != nil {
+			tx.Rollback()
+			return OrderSlip{}, err
+		}
 		order.Reference = newReference()
 		order.Status = "open"
 		err = tx.QueryRowContext(ctx, `
