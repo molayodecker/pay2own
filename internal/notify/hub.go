@@ -54,6 +54,10 @@ func FromEnv(firebaseFile, accountSID, authToken, messagingServiceSID, fromNumbe
 		return nil, err
 	}
 	sms := NewTwilio(accountSID, authToken, messagingServiceSID, fromNumber)
+	if sms == nil && accountSID != "" && authToken != "" && whatsappFrom != "" {
+		sms = NewTwilio(accountSID, authToken, "", whatsappFrom)
+		sms.from = "" // No SMS sender was configured; WhatsApp uses its own source.
+	}
 	if sms != nil {
 		sms.WhatsAppFrom = whatsappFrom
 		sms.ContentSID = contentSID
