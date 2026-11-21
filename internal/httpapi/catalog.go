@@ -127,6 +127,10 @@ func (s CatalogService) remove(log *slog.Logger) http.HandlerFunc {
 			writeJSON(w, log, http.StatusNotFound, map[string]string{"error": "That phone is not on the list."})
 			return
 		}
+		if err == store.ErrCatalogReserved {
+			writeJSON(w, log, http.StatusConflict, map[string]string{"error": "Cancel open orders before deleting this phone."})
+			return
+		}
 		if err != nil {
 			log.Error("catalog delete failed", "err", err)
 			writeJSON(w, log, http.StatusServiceUnavailable, map[string]string{"error": "The phone list is unavailable."})
