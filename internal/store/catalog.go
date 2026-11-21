@@ -16,6 +16,9 @@ var ErrIMEITaken = errors.New("imei taken")
 // ErrBadIMEI means an IMEI is not 15 digits.
 var ErrBadIMEI = errors.New("bad imei")
 
+// ErrCatalogReserved protects physical handsets held by open orders.
+var ErrCatalogReserved = errors.New("catalog has reserved units")
+
 // CatalogUnit is one physical handset on a catalog phone.
 type CatalogUnit struct {
 	IMEI   string
@@ -139,7 +142,32 @@ RETURNING id`,
 }
 
 func (s *Store) DeleteCatalog(ctx context.Context, id string) error {
-	result, err := s.db.ExecContext(ctx, `DELETE FROM catalog_phones WHERE id = $1`, id)
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var lockedID string
+	err = tx.QueryRowContext(ctx, `SELECT id FROM catalog_phones WHERE id = $1 FOR UPDATE`, id).Scan(&lockedID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrNotFound
+	}
+	if err != nil {
+		return err
+	}
+	var active bool
+	err = tx.QueryRowContext(ctx, `SELECT EXISTS (
+		SELECT 1 FROM catalog_phone_units WHERE catalog_phone_id = $1 AND status = 'reserved'
+		UNION ALL
+		SELECT 1 FROM order_slips WHERE catalog_phone_id = $1 AND status = 'open'
+	)`, id).Scan(&active)
+	if err != nil {
+		return err
+	}
+	if active {
+		return ErrCatalogReserved
+	}
+	result, err := tx.ExecContext(ctx, `DELETE FROM catalog_phones WHERE id = $1`, id)
 	if err != nil {
 		return err
 	}
@@ -150,7 +178,7 @@ func (s *Store) DeleteCatalog(ctx context.Context, id string) error {
 	if count == 0 {
 		return ErrNotFound
 	}
-	return nil
+	return tx.Commit()
 }
 
 func replaceAvailableIMEIs(ctx context.Context, tx *sql.Tx, phoneID string, imeis []string) error {
