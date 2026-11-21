@@ -47,6 +47,8 @@ type Charger interface {
 type Options struct {
 	Charger Charger       // nil means payments are switched off
 	Notify  notify.Sender // nil means nobody is told when a payment lands
+	Orders  OrderService
+	Catalog CatalogService
 }
 
 var imeiPattern = regexp.MustCompile(`^[0-9]{15}$`)
@@ -75,6 +77,18 @@ func NewRouter(inst Installments, log *slog.Logger, opts Options) http.Handler {
 		requireDevice(inst, log, restrictionHandler(inst, log)))
 	mux.HandleFunc("POST /api/devices/{imei}/release-confirmed",
 		requireDevice(inst, log, releaseConfirmedHandler(inst, log)))
+	if opts.Orders.Store != nil {
+		mux.HandleFunc("POST /api/orders", opts.Orders.create(log))
+		mux.HandleFunc("GET /api/orders", opts.Orders.list(log))
+		mux.HandleFunc("POST /api/orders/{reference}/cancel", opts.Orders.cancel(log))
+	}
+	if opts.Catalog.Store != nil {
+		mux.HandleFunc("GET /api/catalog/phones", opts.Catalog.list(log))
+		mux.HandleFunc("POST /api/catalog/phones", opts.Catalog.create(log))
+		mux.HandleFunc("GET /api/catalog/phones/{id}", opts.Catalog.get(log))
+		mux.HandleFunc("PUT /api/catalog/phones/{id}", opts.Catalog.save(log))
+		mux.HandleFunc("DELETE /api/catalog/phones/{id}", opts.Catalog.remove(log))
+	}
 	return logRequests(log, mux, mux)
 }
 

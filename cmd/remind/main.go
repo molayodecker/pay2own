@@ -31,6 +31,8 @@ func run(log *slog.Logger) error {
 		os.Getenv("TWILIO_AUTH_TOKEN"),
 		os.Getenv("TWILIO_MESSAGING_SERVICE_SID"),
 		notify.TwilioFromNumber(os.Getenv("TWILIO_PHONE_NUMBER"), os.Getenv("TWILIO_FROM_NUMBER")),
+		os.Getenv("TWILIO_WHATSAPP_FROM"),
+		os.Getenv("TWILIO_TEMPLATE_PAY2OWN_ORDER"),
 	)
 	if err != nil {
 		return err

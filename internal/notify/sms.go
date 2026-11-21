@@ -2,6 +2,7 @@ package notify
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -17,9 +18,17 @@ type SMS struct {
 	authToken        string
 	messagingService string
 	from             string
+	WhatsAppFrom     string
+	ContentSID       string
 	messagesURL      string
 	client           *http.Client
+	attemptTimeout   time.Duration
 }
+
+// DeliveryAttemptTimeout bounds one WhatsApp or SMS request.
+// It is shorter than the Twilio client's ten-second timeout, so a stall
+// ends and the fallback still has a live context.
+const DeliveryAttemptTimeout = 8 * time.Second
 
 // NewTwilio returns nil when the account, token, or sender is missing, which turns SMS off.
 func NewTwilio(accountSID, authToken, messagingServiceSID, fromNumber string) *SMS {
@@ -32,6 +41,7 @@ func NewTwilio(accountSID, authToken, messagingServiceSID, fromNumber string) *S
 		messagingService: messagingServiceSID,
 		from:             fromNumber,
 		client:           &http.Client{Timeout: 10 * time.Second},
+		attemptTimeout:   DeliveryAttemptTimeout,
 	}
 }
 
@@ -77,6 +87,108 @@ func (s *SMS) SendSMS(ctx context.Context, phone, body string) error {
 }
 
 func (s *SMS) SendPush(context.Context, string, string, string) error { return ErrNotConfigured }
+
+// DeliverText tries WhatsApp first and falls back to SMS when WhatsApp cannot send.
+// The channel is "whatsapp", "sms", or "failed". A failed send does not return an error
+// so the caller can still keep the order.
+func (s *SMS) DeliverText(ctx context.Context, phone, text string, vars map[string]string) (string, error) {
+	if s == nil {
+		return "failed", nil
+	}
+	if s.ContentSID != "" {
+		if s.attempt(ctx, func(ctx context.Context) error {
+			return s.sendWhatsApp(ctx, phone, "", vars)
+		}) {
+			return "whatsapp", nil
+		}
+	} else if s.WhatsAppFrom != "" {
+		if s.attempt(ctx, func(ctx context.Context) error {
+			return s.sendWhatsApp(ctx, phone, text, nil)
+		}) {
+			return "whatsapp", nil
+		}
+	}
+	if s.attempt(ctx, func(ctx context.Context) error {
+		return s.SendSMS(ctx, phone, text)
+	}) {
+		return "sms", nil
+	}
+	return "failed", nil
+}
+
+// attempt gives one send its own deadline. The parent context stays open
+// for the next attempt when this one stalls.
+func (s *SMS) attempt(parent context.Context, send func(context.Context) error) bool {
+	timeout := s.attemptTimeout
+	if timeout <= 0 {
+		timeout = DeliveryAttemptTimeout
+	}
+	ctx, cancel := context.WithTimeout(parent, timeout)
+	defer cancel()
+	return send(ctx) == nil
+}
+
+func (s *SMS) sendWhatsApp(ctx context.Context, phone, text string, vars map[string]string) error {
+	if s == nil || s.accountSID == "" || s.authToken == "" {
+		return ErrNotConfigured
+	}
+	to, err := e164(phone)
+	if err != nil {
+		return err
+	}
+	form := url.Values{}
+	form.Set("To", "whatsapp:"+to)
+	switch {
+	case s.ContentSID != "" && len(vars) > 0:
+		encoded, err := json.Marshal(vars)
+		if err != nil {
+			return err
+		}
+		form.Set("ContentSid", s.ContentSID)
+		form.Set("ContentVariables", string(encoded))
+	case text != "":
+		form.Set("Body", text)
+	default:
+		return ErrNotConfigured
+	}
+	switch {
+	case s.messagingService != "":
+		form.Set("MessagingServiceSid", s.messagingService)
+	case s.WhatsAppFrom != "":
+		from, err := e164(strings.TrimPrefix(s.WhatsAppFrom, "whatsapp:"))
+		if err != nil {
+			return err
+		}
+		form.Set("From", "whatsapp:"+from)
+	case s.from != "":
+		from, err := e164(s.from)
+		if err != nil {
+			return err
+		}
+		form.Set("From", "whatsapp:"+from)
+	default:
+		return ErrNotConfigured
+	}
+	endpoint := s.messagesURL
+	if endpoint == "" {
+		endpoint = "https://api.twilio.com/2010-04-01/Accounts/" + url.PathEscape(s.accountSID) + "/Messages.json"
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, strings.NewReader(form.Encode()))
+	if err != nil {
+		return err
+	}
+	req.SetBasicAuth(s.accountSID, s.authToken)
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	resp, err := s.client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		return fmt.Errorf("whatsapp status %d", resp.StatusCode)
+	}
+	return nil
+}
 
 var (
 	e164Pattern = regexp.MustCompile(`^\+[1-9]\d{7,14}$`)

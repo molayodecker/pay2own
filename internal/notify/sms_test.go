@@ -6,7 +6,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
 	"testing"
+	"time"
 )
 
 func TestNewTwilioDisabledWithoutCredentials(t *testing.T) {
@@ -76,6 +78,38 @@ func TestSendSMSStatus(t *testing.T) {
 	sms.messagesURL = srv.URL
 	if err := sms.SendSMS(context.Background(), "0551234987", "Hi"); err == nil || err.Error() != "sms status 401" {
 		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestDeliverTextFallsBackWhenWhatsAppStalls(t *testing.T) {
+	var whatsapp, sms int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		raw, _ := io.ReadAll(r.Body)
+		form, _ := url.ParseQuery(string(raw))
+		if strings.HasPrefix(form.Get("To"), "whatsapp:") {
+			whatsapp++
+			<-r.Context().Done()
+			return
+		}
+		sms++
+		w.WriteHeader(http.StatusCreated)
+	}))
+	defer srv.Close()
+
+	sender := NewTwilio("ACtest", "secret", "MGservice", "+233200000000")
+	sender.messagesURL = srv.URL
+	sender.WhatsAppFrom = "+233200000000"
+	sender.attemptTimeout = 40 * time.Millisecond
+	sender.client.Timeout = time.Second
+
+	parent, cancel := context.WithTimeout(context.Background(), 400*time.Millisecond)
+	defer cancel()
+	channel, err := sender.DeliverText(parent, "0551234987", "Hello", nil)
+	if err != nil || channel != "sms" || whatsapp != 1 || sms != 1 {
+		t.Fatalf("channel=%s err=%v whatsapp=%d sms=%d", channel, err, whatsapp, sms)
+	}
+	if parent.Err() != nil {
+		t.Fatal("whatsapp stall consumed the parent deadline")
 	}
 }
 
