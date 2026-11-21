@@ -35,10 +35,10 @@ func IntakeToken(appEnv, configured string) string {
 	if token := strings.TrimSpace(configured); token != "" {
 		return token
 	}
-	if strings.EqualFold(strings.TrimSpace(appEnv), "production") {
-		return ""
+	if strings.EqualFold(strings.TrimSpace(appEnv), "development") || strings.EqualFold(strings.TrimSpace(appEnv), "local") {
+		return localToken
 	}
-	return localToken
+	return ""
 }
 type Client struct {
 	BaseURL string
