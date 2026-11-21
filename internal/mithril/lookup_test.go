@@ -50,8 +50,11 @@ func TestAPIBaseFollowsTheEnvironment(t *testing.T) {
 	if IntakeToken("production", "") != "" {
 		t.Fatal("production must not invent a token")
 	}
-	if IntakeToken("", "") != "pay2own-local-dev" {
-		t.Fatal("local token default")
+	if IntakeToken("", "") != "" {
+		t.Fatal("unset environment must not enable public dev token")
+	}
+	if IntakeToken("development", "") != "pay2own-local-dev" {
+		t.Fatal("explicit development should allow local token")
 	}
 }
 
