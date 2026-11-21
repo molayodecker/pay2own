@@ -38,6 +38,10 @@ func TestOrderHoldsOneIMEIAndCancelPutsItBack(t *testing.T) {
 	if order.IMEI == "" || order.Status != "open" {
 		t.Fatalf("reserved %#v", order)
 	}
+	if err := st.DeleteCatalog(ctx, phone.ID); err != ErrCatalogReserved {
+		t.Fatalf("reserved catalog deletion err = %v, want %v", err, ErrCatalogReserved)
+	}
+
 	after, err := st.GetCatalog(ctx, phone.ID)
 	if err != nil {
 		t.Fatalf("get: %v", err)
@@ -78,5 +82,8 @@ func TestOrderHoldsOneIMEIAndCancelPutsItBack(t *testing.T) {
 	}
 	if restored.Available != 1 {
 		t.Fatalf("available after cancel = %d", restored.Available)
+	}
+	if err := st.DeleteCatalog(ctx, phone.ID); err != ErrCatalogReserved {
+		t.Fatalf("second open order should prevent deletion: %v", err)
 	}
 }
