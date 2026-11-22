@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -98,6 +99,9 @@ func run(log *slog.Logger) error {
 		WifiSecurity:      os.Getenv("PROVISIONING_WIFI_SECURITY"),
 	}, log)
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if redirectShopRoot(w, r) {
+			return
+		}
 		if r.URL.Path == "/pay2own.apk" {
 			serveAPK(w, r)
 			return
@@ -134,6 +138,19 @@ func run(log *slog.Logger) error {
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	return srv.Shutdown(shutdownCtx)
+}
+
+// redirectShopRoot sends the android shop hostname to the admin home.
+func redirectShopRoot(w http.ResponseWriter, r *http.Request) bool {
+	host := r.Host
+	if name, _, err := net.SplitHostPort(host); err == nil {
+		host = name
+	}
+	if !strings.EqualFold(host, "android.pay2own.app") || r.URL.Path != "/" {
+		return false
+	}
+	http.Redirect(w, r, "/admin/", http.StatusFound)
+	return true
 }
 
 func messenger(alerts notify.Sender) httpapi.OrderMessenger {

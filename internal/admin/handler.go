@@ -7,11 +7,12 @@ import (
 	"encoding/json"
 	"html/template"
 	"io"
-	"net"
-	"sync"
+	"io/fs"
 	"log/slog"
+	"net"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/skip2/go-qrcode"
@@ -20,6 +21,9 @@ import (
 
 //go:embed templates/*.html
 var templateFiles embed.FS
+
+//go:embed static/*
+var staticFiles embed.FS
 
 // Shop is the store the shop screens need.
 type Shop interface {
@@ -51,10 +55,16 @@ func New(shop Shop, password string, secret []byte, provision Provision, log *sl
 		tmpl: template.Must(template.ParseFS(templateFiles, "templates/*.html")),
 	}
 	mux := http.NewServeMux()
+	brand, err := fs.Sub(staticFiles, "static")
+	if err != nil {
+		panic(err)
+	}
+	mux.Handle("GET /admin/static/", http.StripPrefix("/admin/static/", http.FileServer(http.FS(brand))))
 	mux.HandleFunc("GET /admin/login", h.loginForm)
 	mux.HandleFunc("POST /admin/login", h.login)
 	mux.HandleFunc("POST /admin/logout", h.logout)
 	mux.HandleFunc("GET /admin", h.home)
+	mux.HandleFunc("GET /admin/{$}", h.home)
 	mux.HandleFunc("GET /admin/find", h.find)
 	mux.HandleFunc("GET /admin/model", h.model)
 	mux.HandleFunc("POST /admin/sales", h.createSale)
@@ -126,7 +136,9 @@ type loginFailures struct {
 func (h *Handler) loginKey(r *http.Request) string {
 	// Do not trust caller-controlled forwarding headers for rate-limit identity.
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil { return r.RemoteAddr }
+	if err != nil {
+		return r.RemoteAddr
+	}
 	return host
 }
 
@@ -148,9 +160,13 @@ func (h *Handler) recordLogin(key string, success bool) {
 		delete(h.failures, key)
 		return
 	}
-	if h.failures == nil { h.failures = make(map[string]loginFailures) }
+	if h.failures == nil {
+		h.failures = make(map[string]loginFailures)
+	}
 	v := h.failures[key]
-	if time.Now().After(v.until) { v = loginFailures{until: time.Now().Add(15 * time.Minute)} }
+	if time.Now().After(v.until) {
+		v = loginFailures{until: time.Now().Add(15 * time.Minute)}
+	}
 	v.count++
 	h.failures[key] = v
 }
