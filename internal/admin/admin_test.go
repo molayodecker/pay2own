@@ -22,8 +22,12 @@ func TestLoginAndSale(t *testing.T) {
 	}
 
 	bad := post(t, h, "/admin/login", "", url.Values{"password": {"nope"}})
-	if bad.Code != http.StatusUnauthorized || !strings.Contains(bad.Body.String(), "Wrong password") {
+	if bad.Code != http.StatusUnauthorized || !strings.Contains(bad.Body.String(), "Wrong password") || !strings.Contains(bad.Body.String(), "/admin/static/logo-light.png") {
 		t.Fatalf("bad password: %d %s", bad.Code, bad.Body.String())
+	}
+	logo := get(t, h, "/admin/static/logo-light.png", "")
+	if logo.Code != http.StatusOK || logo.Header().Get("Content-Type") != "image/png" {
+		t.Fatalf("logo: %d %s", logo.Code, logo.Header().Get("Content-Type"))
 	}
 
 	good := post(t, h, "/admin/login", "", url.Values{"password": {"shop-secret"}})
@@ -33,7 +37,7 @@ func TestLoginAndSale(t *testing.T) {
 	cookie := good.Result().Cookies()[0].Name + "=" + good.Result().Cookies()[0].Value
 
 	home := get(t, h, "/admin", cookie)
-	if home.Code != http.StatusOK || !strings.Contains(home.Body.String(), "New sale") || !strings.Contains(home.Body.String(), "Can pay a month") {
+	if home.Code != http.StatusOK || !strings.Contains(home.Body.String(), "New sale") || !strings.Contains(home.Body.String(), "Can pay a month") || !strings.Contains(home.Body.String(), "/admin/static/logo-dark.png") {
 		t.Fatalf("home: %d", home.Code)
 	}
 	csrf := csrfFrom(t, home.Body.String())
@@ -226,7 +230,9 @@ func TestAdminLoginThrottlesRepeatedFailures(t *testing.T) {
 	h := New(&fakeShop{}, "shop-secret", []byte("0123456789abcdef"), Provision{}, nil)
 	for i := 0; i < 5; i++ {
 		res := post(t, h, "/admin/login", "", url.Values{"password": {"wrong"}})
-		if res.Code != http.StatusUnauthorized { t.Fatalf("attempt %d: %d", i, res.Code) }
+		if res.Code != http.StatusUnauthorized {
+			t.Fatalf("attempt %d: %d", i, res.Code)
+		}
 	}
 	blocked := post(t, h, "/admin/login", "", url.Values{"password": {"shop-secret"}})
 	if blocked.Code != http.StatusTooManyRequests || blocked.Header().Get("Retry-After") == "" {
@@ -237,7 +243,9 @@ func TestAdminLoginThrottlesRepeatedFailures(t *testing.T) {
 func TestAdminCookieRequiresHTTPS(t *testing.T) {
 	h := New(&fakeShop{}, "shop-secret", []byte("0123456789abcdef"), Provision{}, nil)
 	resp := post(t, h, "/admin/login", "", url.Values{"password": {"shop-secret"}})
-	if resp.Code != http.StatusSeeOther { t.Fatalf("login: %d", resp.Code) }
+	if resp.Code != http.StatusSeeOther {
+		t.Fatalf("login: %d", resp.Code)
+	}
 	if len(resp.Result().Cookies()) == 0 || !resp.Result().Cookies()[0].Secure {
 		t.Fatal("session cookie must be Secure behind Fly TLS termination")
 	}
@@ -247,7 +255,9 @@ func TestCediParserRejectsImpreciseOrOverflowAmounts(t *testing.T) {
 	cases := map[string]int64{"0": 0, "0.01": 1, "1.2": 120, "12.34": 1234, "999999.99": 99999999}
 	for raw, want := range cases {
 		got, err := ghsToMinor(raw)
-		if err != nil || got != want { t.Fatalf("%q: got %d err %v want %d", raw, got, err, want) }
+		if err != nil || got != want {
+			t.Fatalf("%q: got %d err %v want %d", raw, got, err, want)
+		}
 	}
 	for _, raw := range []string{"-1", "NaN", "Inf", "1.234", "1.", ".50", "92233720368547759", "99999999999999999999"} {
 		if got, err := ghsToMinor(raw); err == nil {
